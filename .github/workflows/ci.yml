@@ -1,0 +1,20 @@
+name: CI
+on: [push, pull_request]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with: python-version: '3.11'
+      - name: Lint
+        run: |
+          pip install -r ml/requirements.txt
+          flake8 .
+      - name: Build Docker images
+        run: |
+          docker build -t openbioops/feature-extract:ci pipelines/containers/feature-extract
+      - name: Run smoke pipeline
+        run: |
+          nextflow run pipelines/main.nf -profile test -with-report report.html

@@ -1,0 +1,61 @@
+# Nextflow / pipeline
+work/
+.nextflow/
+.nextflow.log*
+report.html
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+services/*/.venv/
+env/
+venv/
+pip-wheel-metadata/
+*.egg-info/
+
+# Data and models
+*.parquet
+*.pt
+*.ckpt
+*.pkl
+ml/*.parquet
+ml/*.pt
+ml/*.ckpt
+pipelines/results/
+
+# Node
+node_modules/
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Docker
+*.tar
+
+# Large local artifacts
+*.log
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.venv
+venv/
+# Node
+node_modules/
+# ML artifacts
+artifacts/
+ml/*.parquet
+ml/model.pt
+ml/embeddings/
+ml/similarity/
+# Nextflow / pipeline work
+work/
+.nextflow/
+# OS
+.DS_Store
