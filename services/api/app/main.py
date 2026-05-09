@@ -1,107 +1,114 @@
 # services/api/app/main.py
-
 from __future__ import annotations
 
-from typing import List, Dict
-from fastapi import FastAPI, HTTPException
+import json
+import uuid
+from pathlib import Path
+from typing import Dict
 
-from .ml.run_similarity import (
-    RunSimilarityIndex,
-    compute_run_vector,
-)
+from fastapi import FastAPI, HTTPException, Path as FPath, Body
+from pydantic import BaseModel
 
-app = FastAPI()
+from .ml.run_similarity import compute_run_vector, RunSimilarityIndex
 
-# --- Demo in-memory data (replace with your real storage) ---
+BASE_DIR = Path(__file__).parent
+DATA_DIR = BASE_DIR / "data"
+RUNS_FILE = DATA_DIR / "runs.json"
+ARTIFACTS_DIR = Path(__file__).parents[2] / "artifacts" / "ml"
 
-RUNS = [
-    {"id": "demo", "date": "2026-04-30"},
-]
+app = FastAPI(title="OpenBioOps API")
 
-EMBEDDINGS: Dict[str, List[dict]] = {
-    "demo": [
-        {"0": 0.08015053707816414, "1": -0.5403210025445111, "2": 0.051267366920527226, "3": 0.28601559668860654, "4": -0.04177062241908575},
-        {"0": 0.515632680090998, "1": 0.02494750863921818, "2": 0.5387146380226487, "3": -0.22664045741867464, "4": -0.10058400292438738},
-        {"0": 0.103157489306816, "1": 0.35304155288766303, "2": -0.3511269954196515, "3": 0.14139030128311328, "4": -0.2154341182619997},
-        {"0": -0.37553345170927754, "1": 0.14008218799568953, "2": 0.005683546972283652, "3": 0.16186360622002607, "4": 0.06331298915797916},
-        {"0": 0.5593084716548833, "1": 0.12558423293421034, "2": -0.23308623765095443, "3": -0.10849893688950228, "4": 0.13292421558264994},
-        {"0": 0.047364186538655935, "1": 0.475212682595236, "2": 0.04791657142861722, "3": -0.0050701316035661435, "4": 0.08592571693857483},
-        {"0": -0.5656719289179584, "1": -0.04543381607115537, "2": 0.06352069583125837, "3": -0.07866692239863779, "4": 0.0802966293895127},
-        {"0": -0.4141922894918505, "1": -0.29332644561151533, "2": -0.2679707659232915, "3": -0.4101403491792679, "4": -0.0621862871600789},
-        {"0": -0.4359699220542252, "1": 0.08336023100996222, "2": 0.28313027001327407, "3": 0.14079237374486922, "4": -0.015756085546294225},
-        {"0": 0.4857542275037937, "1": -0.32314713183479843, "2": -0.13804909019471173, "3": 0.09895491955303352, "4": 0.07327156524312972},
-    ],
-}
+SIM_INDEX = RunSimilarityIndex()
 
-FEATURES: Dict[str, dict] = {
-    "demo": {"n_cells": 100, "n_genes": 2000, "n_hvgs": 300},
-}
+# Helpers
+def ensure_data_dir() -> None:
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-# --- Similarity index setup ---
+def load_runs() -> Dict[str, dict]:
+    ensure_data_dir()
+    if not RUNS_FILE.exists():
+        RUNS_FILE.write_text(json.dumps({}))
+        return {}
+    return json.loads(RUNS_FILE.read_text())
 
-similarity_index = RunSimilarityIndex()
+def save_runs(runs: Dict[str, dict]) -> None:
+    ensure_data_dir()
+    RUNS_FILE.write_text(json.dumps(runs, indent=2))
 
+def validate_run_id_format(run_id: str) -> bool:
+    try:
+        uuid.UUID(run_id)
+        return True
+    except Exception:
+        return False
 
-def rebuild_similarity_index() -> None:
-    """
-    Recompute run-level vectors from EMBEDDINGS and rebuild the similarity index.
-    """
-    global similarity_index
-    vectors = {}
-    for run in RUNS:
-        run_id = run["id"]
-        rows = EMBEDDINGS.get(run_id)
-        if not rows:
-            continue
-        vec = compute_run_vector(rows)
-        vectors[run_id] = vec
-    similarity_index = RunSimilarityIndex(vectors=vectors)
+def ensure_run_exists(run_id: str) -> dict:
+    runs = load_runs()
+    if run_id not in runs:
+        raise HTTPException(status_code=404, detail="run_id not found")
+    return runs[run_id]
 
+# Models
+class CreateRunRequest(BaseModel):
+    name: str | None = None
+    metadata: dict | None = None
 
-@app.on_event("startup")
-def on_startup() -> None:
-    rebuild_similarity_index()
+class CreateRunResponse(BaseModel):
+    run_id: str
+    name: str | None = None
 
-
-# --- Existing endpoints ---
+# Endpoints
+@app.post("/runs", response_model=CreateRunResponse)
+def create_run(payload: CreateRunRequest = Body(...)):
+    runs = load_runs()
+    run_id = str(uuid.uuid4())
+    runs[run_id] = {
+        "id": run_id,
+        "name": payload.name or run_id,
+        "metadata": payload.metadata or {},
+        "qc": {"status": "unknown"},
+    }
+    save_runs(runs)
+    return {"run_id": run_id, "name": runs[run_id]["name"]}
 
 @app.get("/runs")
 def list_runs():
-    return RUNS
+    runs = load_runs()
+    return list(runs.values())
 
+@app.post("/runs/{run_id}/compute_vector")
+def compute_vector_for_run(run_id: str = FPath(...), force: bool = False):
+    if not validate_run_id_format(run_id):
+        raise HTTPException(status_code=400, detail="invalid run_id format")
+    ensure_run_exists(run_id)
 
-@app.get("/embeddings/{run_id}")
-def get_embeddings(run_id: str):
-    rows = EMBEDDINGS.get(run_id)
-    if rows is None:
-        raise HTTPException(status_code=404, detail=f"Unknown run_id {run_id!r}")
-    return rows
+    # Expect artifact at artifacts/ml/{run_id}.json for demo
+    emb_json = ARTIFACTS_DIR / f"{run_id}.json"
+    emb_parquet = ARTIFACTS_DIR / f"{run_id}.parquet"
 
+    if emb_json.exists():
+        rows = json.loads(emb_json.read_text())
+    elif emb_parquet.exists():
+        # lazy import to avoid heavy deps at import time
+        import pandas as pd
+        df = pd.read_parquet(emb_parquet)
+        rows = df.to_dict(orient="records")
+    else:
+        raise HTTPException(status_code=404, detail="embeddings not found for run")
 
-@app.get("/features/{run_id}")
-def get_features(run_id: str):
-    stats = FEATURES.get(run_id)
-    if stats is None:
-        raise HTTPException(status_code=404, detail=f"Unknown run_id {run_id!r}")
-    return stats
+    vec = compute_run_vector(rows)
+    SIM_INDEX.upsert(run_id, vec)
 
-
-# --- New similarity endpoint ---
+    # Optionally persist run vector registry here (left minimal)
+    return {"run_id": run_id, "vector_len": int(vec.shape[0]), "indexed": True}
 
 @app.get("/similarity/{run_id}")
-def get_similarity(run_id: str, k: int = 5):
-    """
-    Return the top-k most similar runs to the given run_id based on run-level embeddings.
-    """
-    if run_id not in EMBEDDINGS:
-        raise HTTPException(status_code=404, detail=f"Unknown run_id {run_id!r}")
-
+def get_similarity(run_id: str = FPath(...), k: int = 5):
+    if not validate_run_id_format(run_id):
+        raise HTTPException(status_code=400, detail="invalid run_id format")
+    ensure_run_exists(run_id)
     try:
-        results = similarity_index.most_similar(run_id, k=k)
+        sims = SIM_INDEX.most_similar(run_id, k=k)
     except KeyError:
-        raise HTTPException(status_code=404, detail=f"No vector for run_id {run_id!r}")
-
-    return [
-        {"run_id": other_id, "similarity": sim}
-        for (other_id, sim) in results
-    ]
+        raise HTTPException(status_code=404, detail="run vector not indexed")
+    return [{"run_id": r, "similarity": float(s)} for r, s in sims]
