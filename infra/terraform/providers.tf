@@ -1,11 +1,7 @@
 terraform {
-  required_version = ">= 1.2"
-  backend "s3" {
-    bucket = var.tfstate_bucket
-    key    = "openbioops/terraform.tfstate"
-    region = var.aws_region
-    dynamodb_table = var.tfstate_lock_table
-  }
+  required_version = ">= 1.5"
+
+  backend "s3" {}   # values supplied via -backend-config at init time
 }
 
 provider "aws" {

@@ -18,10 +18,10 @@ def main():
         df = pd.read_parquet(args.counts)
 
     # Basic normalization and HVG selection for demo
-    ad = sc.AnnData(df.T)  # cells x genes
+    ad = sc.AnnData(df)  # cells x genes
     sc.pp.normalize_total(ad, target_sum=1e4)
     sc.pp.log1p(ad)
-    sc.pp.highly_variable_genes(ad, n_top_genes=2000, flavor="seurat_v3")
+    sc.pp.highly_variable_genes(ad, n_top_genes=2000, flavor="seurat")
     ad = ad[:, ad.var.highly_variable]
     # compute PCA + UMAP coordinates for visualization
     sc.tl.pca(ad, n_comps=50, svd_solver='arpack')
@@ -29,8 +29,14 @@ def main():
     sc.tl.umap(ad)
 
     # Export features and embeddings as parquet
-    features = pd.DataFrame(ad.X, index=ad.obs_names, columns=[f"PC{i}" for i in range(ad.X.shape[1])])
-    features.to_parquet(args.out)
+    n_pcs = ad.obsm["X_pca"].shape[1]
+    pca_df = pd.DataFrame(
+        ad.obsm["X_pca"],
+        index=ad.obs_names,
+        columns=[f"PC{i}" for i in range(n_pcs)],
+    )
+    pca_df.to_parquet(args.out)
+    print(f"Exported {pca_df.shape[0]} cells × {pca_df.shape[1]} PCs → {args.out}")
 
 if __name__ == "__main__":
     main()

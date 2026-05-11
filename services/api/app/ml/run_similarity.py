@@ -13,7 +13,7 @@ def _to_array(rows: List[dict]) -> np.ndarray:
         raise ValueError("No rows provided for embeddings")
 
     # pick numeric keys from first row
-    keys = [k for k, v in rows[0].items() if isinstance(v, (int, float))]
+    keys = sorted(k for k, v in rows[0].items() if isinstance(v, (int, float)))
     if not keys:
         raise ValueError("No numeric columns found in embeddings")
 
