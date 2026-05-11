@@ -1,10 +1,11 @@
 import argparse
-from pyexpat import model
+
+import mlflow
 import pandas as pd
 import torch
 from torch.utils.data import DataLoader, Dataset
-from model import ContrastiveEncoder, nt_xent_loss
-import mlflow
+
+from model import ContrastiveEncoder, nt_xent_loss  # noqa: F401
 
 
 class TabularDataset(Dataset):
@@ -19,11 +20,7 @@ class TabularDataset(Dataset):
 
 
 def augment(x: torch.Tensor, dropout_rate: float = 0.1) -> torch.Tensor:
-    """
-    scRNA-seq augmentation: simulate technical dropout by randomly
-    zeroing a fraction of features, mimicking the dropout noise
-    inherent in single-cell sequencing.
-    """
+    """Simulate scRNA-seq dropout by randomly zeroing features."""
     mask = torch.bernoulli(torch.ones_like(x) * (1 - dropout_rate))
     return x * mask
 
@@ -32,8 +29,8 @@ def train(args):
     ds = TabularDataset(df)
     dl = DataLoader(ds, batch_size=args.batch_size, shuffle=True, drop_last=True)
 
-    model = ContrastiveEncoder(input_dim=df.shape[1], hidden=256, emb_dim=64)
-    opt = torch.optim.Adam(model.parameters(), lr=args.lr)
+    encoder = ContrastiveEncoder(input_dim=df.shape[1], hidden=256, emb_dim=64)
+    opt = torch.optim.Adam(encoder.parameters(), lr=args.lr)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(opt, T_max=args.epochs)
 
     mlflow.set_experiment("openbioops-contrastive")
@@ -46,24 +43,25 @@ def train(args):
             "input_dim": df.shape[1],
         })
 
-    for epoch in range(1, args.epochs + 1):
-        model.train()
-        epoch_loss = 0.0
-        for x in dl:
-            z1 = model(augment(x, dropout_rate=0.1))
-            z2 = model(augment(x, dropout_rate=0.1))
-            loss = nt_xent_loss(z1, z2, temperature=args.temperature)
-            opt.zero_grad()
-            loss.backward()
-            opt.step()
-            epoch_loss += loss.item()
-        scheduler.step()
-        avg = epoch_loss / len(dl)
-        print(f"Epoch {epoch:>3}/{args.epochs}  loss={avg:.4f}")
-        mlflow.log_metric("train_loss", avg, step=epoch)
+        for epoch in range(1, args.epochs + 1):
+            encoder.train()
+            epoch_loss = 0.0
+            for x in dl:
+                z1 = encoder(augment(x, dropout_rate=0.1))
+                z2 = encoder(augment(x, dropout_rate=0.1))
+                loss = nt_xent_loss(z1, z2, temperature=args.temperature)
+                opt.zero_grad()
+                loss.backward()
+                opt.step()
+                epoch_loss += loss.item()
+            scheduler.step()
+            avg = epoch_loss / len(dl)
+            print(f"Epoch {epoch:>3}/{args.epochs}  loss={avg:.4f}")
+            mlflow.log_metric("train_loss", avg, step=epoch)
 
-    torch.save(model.state_dict(), args.out)
-    mlflow.log_artifact(args.out, artifact_path="model")
+        mlflow.log_artifact(args.out, artifact_path="model")
+
+    torch.save(encoder.state_dict(), args.out)
     print(f"Saved model → {args.out}")
 
 

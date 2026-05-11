@@ -4,7 +4,6 @@ inference.py — load a trained ContrastiveEncoder and produce embeddings
 for a given input parquet file.
 """
 import argparse
-from pathlib import Path
 
 import numpy as np
 import pandas as pd

@@ -7,7 +7,7 @@ include { extract_features } from './modules/features.nf'
 
 workflow {
   // input files (put a tiny demo file in data/)
-  Channel.fromPath('data/*').set { reads_ch }
+  Channel.fromPath(params.input).set { reads_ch }
 
   // run QC and capture its output channel
   def qc_out_ch = reads_ch | fastqc

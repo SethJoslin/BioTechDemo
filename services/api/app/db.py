@@ -1,11 +1,9 @@
 from __future__ import annotations
-import json
 import uuid
 from pathlib import Path
-from typing import Dict, List, Optional
 
 from sqlalchemy import create_engine, Column, String, Text, DateTime
-from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+from sqlalchemy.orm import DeclarativeBase, sessionmaker
 from sqlalchemy.sql import func
 
 DB_PATH = Path(__file__).parent / "data" / "runs.db"

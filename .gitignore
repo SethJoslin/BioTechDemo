@@ -60,3 +60,11 @@ work/
 # OS
 .DS_Store
 .envrc
+
+# Large data files — download locally via scripts
+pipelines/data/pbmc3k_*.parquet
+ml/data/pbmc3k_*.parquet
+ml/data/pbmc3k_labels.csv
+ml/pbmc3k_model.pt
+ml/data/sample.parquet
+ml/data/embeddings.parquet

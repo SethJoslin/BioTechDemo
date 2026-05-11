@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import argparse
 import pandas as pd
-import numpy as np
 import scanpy as sc
 
 def main():
@@ -14,7 +13,6 @@ def main():
     try:
         df = pd.read_csv(args.counts, index_col=0)
     except Exception:
-        # fallback: try parquet
         df = pd.read_parquet(args.counts)
 
     # Basic normalization and HVG selection for demo
@@ -24,7 +22,7 @@ def main():
     sc.pp.highly_variable_genes(ad, n_top_genes=2000, flavor="seurat")
     ad = ad[:, ad.var.highly_variable]
     # compute PCA + UMAP coordinates for visualization
-    sc.tl.pca(ad, n_comps=50, svd_solver='arpack')
+    sc.tl.pca(ad, n_comps=50, svd_solver="arpack")
     sc.pp.neighbors(ad, n_neighbors=10, n_pcs=20)
     sc.tl.umap(ad)
 
@@ -36,7 +34,7 @@ def main():
         columns=[f"PC{i}" for i in range(n_pcs)],
     )
     pca_df.to_parquet(args.out)
-    print(f"Exported {pca_df.shape[0]} cells × {pca_df.shape[1]} PCs → {args.out}")
+    print(f"Exported {pca_df.shape[0]} cells x {pca_df.shape[1]} PCs -> {args.out}")
 
 if __name__ == "__main__":
     main()

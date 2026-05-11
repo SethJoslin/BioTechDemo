@@ -2,49 +2,66 @@ name: CI
 on: [push, pull_request]
 
 jobs:
-  lint-and-test:
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"   # was on same line as "with:" — invalid YAML
+          python-version: "3.11"
+      - name: Install flake8
+        run: pip install flake8
+      - name: Lint
+        run: |
+          flake8 services/ ml/ pipelines/ \
+            --max-line-length=100 \
+            --exclude=__pycache__,.venv
 
+  api-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
       - name: Install dependencies
         run: |
-          pip install flake8 pytest httpx
-          pip install -r ml/requirements.txt
-
-      - name: Lint
-        run: flake8 services/ ml/ pipelines/ --max-line-length=100
-
-      - name: Run API tests
+          pip install \
+            fastapi uvicorn pydantic sqlalchemy \
+            pandas pyarrow numpy \
+            faiss-cpu \
+            python-jose[cryptography] passlib[bcrypt] \
+            httpx pytest pytest-anyio
+      - name: Run tests
         run: |
           cd services/api
-          pip install -r requirements.txt
           pytest tests/ -v
 
   build-docker:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Build feature-extract image
         run: |
-          docker build -t openbioops/feature-extract:ci \
+          docker build \
+            -t openbioops/feature-extract:ci \
             pipelines/containers/feature-extract
 
   smoke-pipeline:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
+      - name: Install Python deps for pipeline
+        run: pip install pandas pyarrow
       - name: Install Nextflow
         run: |
           curl -s https://get.nextflow.io | bash
           sudo mv nextflow /usr/local/bin/
-
+      - name: Ensure test input exists
+        run: |
+          mkdir -p pipelines/data
+          echo "test_sample" > pipelines/data/test_sample.txt
       - name: Run smoke pipeline
-        run: nextflow run pipelines/main.nf -profile test
+        run: |
+          cd pipelines
+          nextflow run main.nf -profile test
