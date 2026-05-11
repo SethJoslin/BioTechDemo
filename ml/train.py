@@ -24,6 +24,7 @@ def augment(x: torch.Tensor, dropout_rate: float = 0.1) -> torch.Tensor:
     mask = torch.bernoulli(torch.ones_like(x) * (1 - dropout_rate))
     return x * mask
 
+
 def train(args):
     df = pd.read_parquet(args.input)
     ds = TabularDataset(df)
@@ -58,11 +59,10 @@ def train(args):
             avg = epoch_loss / len(dl)
             print(f"Epoch {epoch:>3}/{args.epochs}  loss={avg:.4f}")
             mlflow.log_metric("train_loss", avg, step=epoch)
-
         mlflow.log_artifact(args.out, artifact_path="model")
 
     torch.save(encoder.state_dict(), args.out)
-    print(f"Saved model → {args.out}")
+    print(f"Saved model -> {args.out}")
 
 
 if __name__ == "__main__":

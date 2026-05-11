@@ -19,10 +19,10 @@ class Base(DeclarativeBase):
 
 class RunModel(Base):
     __tablename__ = "runs"
-    id         = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
-    name       = Column(String, nullable=True)
-    metadata_  = Column("metadata", Text, default="{}")
-    qc_status  = Column(String, default="unknown")
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    name = Column(String, nullable=True)
+    metadata_ = Column("metadata", Text, default="{}")
+    qc_status = Column(String, default="unknown")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 

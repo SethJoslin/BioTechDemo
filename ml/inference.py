@@ -12,7 +12,9 @@ import torch
 from model import ContrastiveEncoder
 
 
-def load_model(checkpoint: str, input_dim: int, hidden: int = 256, emb_dim: int = 64) -> ContrastiveEncoder:
+def load_model(
+        checkpoint: str, input_dim: int, hidden: int = 256, emb_dim: int = 64
+        ) -> ContrastiveEncoder:
     model = ContrastiveEncoder(input_dim=input_dim, hidden=hidden, emb_dim=emb_dim)
     state = torch.load(checkpoint, map_location="cpu")
     model.load_state_dict(state)
@@ -29,14 +31,14 @@ def run_inference(input_path: str, checkpoint: str, out_path: str, batch_size: i
     embeddings = []
     with torch.no_grad():
         for i in range(0, len(X), batch_size):
-            batch = X[i : i + batch_size]
+            batch = X[i : i + batch_size]  # noqa: E203
             z = model(batch)
             embeddings.append(z.numpy())
 
     emb = np.concatenate(embeddings, axis=0)
     out_df = pd.DataFrame(emb, index=df.index, columns=[f"emb_{i}" for i in range(emb.shape[1])])
     out_df.to_parquet(out_path)
-    print(f"Wrote embeddings {out_df.shape} → {out_path}")
+    print(f"Wrote embeddings {out_df.shape} -> {out_path}")
 
 
 if __name__ == "__main__":

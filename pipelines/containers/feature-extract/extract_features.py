@@ -3,6 +3,7 @@ import argparse
 import pandas as pd
 import scanpy as sc
 
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--counts", required=True)
@@ -35,6 +36,7 @@ def main():
     )
     pca_df.to_parquet(args.out)
     print(f"Exported {pca_df.shape[0]} cells x {pca_df.shape[1]} PCs -> {args.out}")
+
 
 if __name__ == "__main__":
     main()
