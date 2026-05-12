@@ -146,8 +146,6 @@ def compute_vector_for_run(
     return {"run_id": run_id, "vector_len": int(vec.shape[0]), "indexed": True, "cached": False}
 
 
-
-
 class QCPayload(BaseModel):
     qc_status: str
     metrics: Optional[dict] = None
