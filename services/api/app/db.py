@@ -23,6 +23,7 @@ class RunModel(Base):
     name = Column(String, nullable=True)
     metadata_ = Column("metadata", Text, default="{}")
     qc_status = Column(String, default="unknown")
+    qc_metrics_ = Column("qc_metrics", Text, default="{}")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
 
 

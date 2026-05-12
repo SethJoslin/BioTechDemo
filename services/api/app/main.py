@@ -49,7 +49,7 @@ def run_to_dict(run: RunModel) -> dict:
         "id": run.id,
         "name": run.name,
         "metadata": json.loads(run.metadata_ or "{}"),
-        "qc": {"status": run.qc_status},
+        "qc": {"status": run.qc_status, "metrics": json.loads(run.qc_metrics_ or "{}")},
         "created_at": run.created_at.isoformat() if run.created_at else None,
     }
 
@@ -144,6 +144,43 @@ def compute_vector_for_run(
     vec = compute_run_vector(rows)
     SIM_INDEX.upsert(run_id, vec)
     return {"run_id": run_id, "vector_len": int(vec.shape[0]), "indexed": True, "cached": False}
+
+
+
+
+class QCPayload(BaseModel):
+    qc_status: str
+    metrics: Optional[dict] = None
+
+
+@app.post("/runs/{run_id}/qc", tags=["runs"], summary="Store QC results for a run")
+def store_qc(
+    run_id: str = FPath(...),
+    payload: QCPayload = Body(...),
+    db: Session = Depends(get_db),
+    user: str = Depends(verify_token),
+):
+    require_valid_uuid(run_id)
+    run = get_run_or_404(db, run_id)
+    run.qc_status = payload.qc_status
+    run.qc_metrics_ = json.dumps(payload.metrics or {})
+    db.commit()
+    return {"run_id": run_id, "qc_status": run.qc_status}
+
+
+@app.get("/runs/{run_id}/qc", tags=["runs"], summary="Get QC results for a run")
+def get_qc(
+    run_id: str = FPath(...),
+    db: Session = Depends(get_db),
+    user: str = Depends(verify_token),
+):
+    require_valid_uuid(run_id)
+    run = get_run_or_404(db, run_id)
+    return {
+        "run_id": run_id,
+        "qc_status": run.qc_status,
+        "metrics": json.loads(run.qc_metrics_ or "{}"),
+    }
 
 
 @app.get("/similarity/{run_id}", tags=["similarity"])
