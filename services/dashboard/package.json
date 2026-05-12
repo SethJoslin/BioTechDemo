@@ -10,7 +10,9 @@
   "scripts": {
     "start": "react-scripts start",
     "build": "react-scripts build",
-    "docker:build": "docker build -t openbioops-dashboard:local ."
+    "docker:build": "docker build -t openbioops-dashboard:local .",
+    "test": "react-scripts test",
+    "test:ci": "CI=true react-scripts test"
   },
   "browserslist": {
     "production": [

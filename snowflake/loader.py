@@ -19,25 +19,12 @@ from typing import Any
 import pandas as pd
 
 
-def get_connection():
-    """Return a Snowflake connection using environment credentials."""
-    try:
-        import snowflake.connector
-    except ImportError:
-        raise ImportError("pip install snowflake-connector-python")
+from contextlib import contextmanager
+import snowflake.connector
 
-    required = [
-        "SNOWFLAKE_ACCOUNT", "SNOWFLAKE_USER", "SNOWFLAKE_PASSWORD",
-        "SNOWFLAKE_WAREHOUSE",
-    ]
-    missing = [k for k in required if not os.environ.get(k)]
-    if missing:
-        raise EnvironmentError(
-            f"Missing Snowflake env vars: {missing}\n"
-            "Set them in .env or export before running."
-        )
-
-    return snowflake.connector.connect(
+@contextmanager
+def sf_conn():
+    conn = snowflake.connector.connect(
         account=os.environ["SNOWFLAKE_ACCOUNT"],
         user=os.environ["SNOWFLAKE_USER"],
         password=os.environ["SNOWFLAKE_PASSWORD"],
@@ -45,11 +32,10 @@ def get_connection():
         database=os.environ.get("SNOWFLAKE_DATABASE", "OPENBIOOPS"),
         schema=os.environ.get("SNOWFLAKE_SCHEMA", "BIOOPS"),
     )
-
-
-def _exec(cur: Any, sql: str, params: tuple = ()) -> None:
-    cur.execute(sql, params)
-
+    try:
+        yield conn
+    finally:
+        conn.close()
 
 # ── loaders ───────────────────────────────────────────────────────────────────
 
@@ -143,66 +129,27 @@ def sync_embeddings(run_id: str, parquet_path: str, model_version: str = "v1") -
     """Write mean embedding vector for a run into RUN_EMBEDDINGS."""
     df = pd.read_parquet(parquet_path)
     mean_vec = df.mean(axis=0).tolist()
-
-    conn_sf = get_connection()
-    cur = conn_sf.cursor()
-    _exec(cur, """
-        MERGE INTO RUN_EMBEDDINGS t USING (
-            SELECT %s AS RUN_ID, %s AS MODEL_VERSION
-        ) s ON t.RUN_ID = s.RUN_ID AND t.MODEL_VERSION = s.MODEL_VERSION
-        WHEN MATCHED THEN UPDATE SET
-            EMBEDDING = PARSE_JSON(%s), EMBEDDING_DIM = %s
-        WHEN NOT MATCHED THEN INSERT
-            (RUN_ID, EMBEDDING_DIM, EMBEDDING, MODEL_VERSION)
-            VALUES (%s, %s, PARSE_JSON(%s), %s)
-    """, (
-        run_id, model_version,
-        json.dumps(mean_vec), len(mean_vec),
-        run_id, len(mean_vec), json.dumps(mean_vec), model_version,
-    ))
-    conn_sf.commit()
-    cur.close()
-    conn_sf.close()
-    print(f"Synced {len(mean_vec)}-dim embedding for run {run_id}")
+    vec_str = ', '.join(str(v) for v in mean_vec)
+    with sf_conn() as conn:
+        cur = conn.cursor()
+        cur.execute("""
+            INSERT INTO RUN_EMBEDDINGS (RUN_ID, EMBEDDING_DIM, EMBEDDING, MODEL_VERSION)
+            VALUES (%s, %s, ARRAY[{}], %s)
+        """.format(vec_str), (run_id, len(mean_vec), model_version))
+        conn.commit()
 
 
-def sync_cell_qc(run_id: str, cell_qc_parquet: str, batch_size: int = 5000) -> int:
+def sync_cell_qc(run_id: str, cell_qc_parquet: str, batch_size: int = 5000) -> None:
     """Batch-insert per-cell QC metrics into CELL_QC."""
     df = pd.read_parquet(cell_qc_parquet)
-    df.index.name = "CELL_BARCODE"
-    df = df.reset_index()
-
-    conn_sf = get_connection()
-    cur = conn_sf.cursor()
-    total = 0
-    for start in range(0, len(df), batch_size):
-        batch = df.iloc[start:start + batch_size]
-        rows = [
-            (
-                row.get("CELL_BARCODE", str(i)),
-                run_id,
-                int(row.get("n_genes_by_counts", 0)),
-                float(row.get("total_counts", 0)),
-                float(row.get("pct_counts_mt", 0)),
-                float(row.get("doublet_score", 0)) if "doublet_score" in row else None,
-                bool(row.get("predicted_doublet", False)) if "predicted_doublet" in row else None,
-            )
-            for i, row in batch.iterrows()
-        ]
-        cur.executemany("""
-            INSERT INTO CELL_QC (
-                CELL_BARCODE, RUN_ID, N_GENES_BY_COUNTS, TOTAL_COUNTS,
-                PCT_COUNTS_MT, DOUBLET_SCORE, PREDICTED_DOUBLET
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s)
-        """, rows)
-        total += len(rows)
-        print(f"  Inserted {total}/{len(df)} cells...")
-
-    conn_sf.commit()
-    cur.close()
-    conn_sf.close()
-    print(f"Synced {total} cell QC rows for run {run_id}")
-    return total
+    df['RUN_ID'] = run_id
+    with sf_conn() as conn:
+        from snowflake.connector.pandas_tools import write_pandas
+        success, nchunks, nrows, _ = write_pandas(
+            conn, df, "CELL_QC", quote_identifiers=False,
+            chunk_size=batch_size, auto_create_table=False
+        )
+        print(f"Synced {nrows} rows to CELL_QC")
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────

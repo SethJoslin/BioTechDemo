@@ -21,3 +21,19 @@ services:
       - REACT_APP_API_URL=http://localhost:8000
     depends_on:
       - api
+
+redis:
+  image: redis:7-alpine
+  ports:
+    - "6379:6379"
+celery-worker:
+  build: ./services/api
+  command: celery -A app.tasks worker --loglevel=info
+  environment:
+    - CELERY_BROKER_URL=redis://redis:6379/0
+    - ARTIFACTS_DIR=/app/artifacts/ml
+    - FEATURES_DIR=/app/artifacts/features
+  volumes:
+    - ./artifacts:/app/artifacts
+  depends_on:
+    - redis

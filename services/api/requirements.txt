@@ -12,3 +12,6 @@ pytest>=7.4.0
 faiss-cpu>=1.7.4
 python-jose[cryptography]>=3.3.0
 passlib[bcrypt]>=1.7.4
+scanpy>=1.9.0
+anndata>=0.8.0celery[redis]>=5.3.0
+pydantic-settings>=2.0.0

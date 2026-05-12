@@ -17,6 +17,18 @@ jobs:
             --max-line-length=100 \
             --exclude=__pycache__,.venv
 
+  test-lib:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install dependencies
+        run: pip install -e lib pytest pandas pyarrow
+      - name: Run tests
+        run: pytest tests/test_processing.py
+
   api-test:
     runs-on: ubuntu-latest
     steps:
@@ -31,7 +43,9 @@ jobs:
             pandas pyarrow numpy \
             faiss-cpu \
             python-jose[cryptography] passlib[bcrypt] \
-            httpx pytest pytest-anyio
+            httpx pytest pytest-anyio \ 
+            torch --index-url https://download.pytorch.org/whl/cpu \
+            scanpy anndata
       - name: Run tests
         run: |
           cd services/api
@@ -65,3 +79,31 @@ jobs:
         run: |
           cd pipelines
           nextflow run main.nf -profile test
+
+    pipeline-integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install Nextflow
+        run: |
+          curl -s https://get.nextflow.io | bash
+          sudo mv nextflow /usr/local/bin/
+      - name: Install openbioops lib
+        run: pip install -e lib
+      - name: Create test input
+        run: |
+          python -c "
+import pandas as pd, numpy as np
+df = pd.DataFrame(np.random.poisson(2, (10, 100)), columns=[f'g{i}' for i in range(100)])
+df.to_parquet('data/test_input.parquet')
+"
+      - name: Run pipeline
+        run: |
+          cd pipelines
+          nextflow run main.nf --input '../data/test_input.parquet' -profile test
+      - name: Check output
+        run: |
+          ls pipelines/features/

@@ -70,7 +70,7 @@ class RunSimilarityIndex:
                 if rid is not None
             }
         except Exception as e:
-            print(f"Warning: could not load FAISS index from disk: {e}")
+            logger.warning(f"Warning: could not load FAISS index from disk: {e}")
 
     # ── index operations ──────────────────────────────────────────────────────
 
@@ -80,22 +80,23 @@ class RunSimilarityIndex:
 
     def upsert(self, run_id: str, vec: np.ndarray) -> None:
         """Add or replace a run vector, then persist to disk."""
-        vec = vec.astype(np.float32)
-        normed = vec.reshape(1, -1).copy()
-        faiss.normalize_L2(normed)
-
+        vec = vec.astype(np.float32).reshape(1, -1)
+        faiss.normalize_L2(vec)
         if self._index is None:
-            self._init_index(vec.shape[0])
-
+            self._init_index(vec.shape[1])
         if run_id in self._pos_map:
-            self._id_map[self._pos_map[run_id]] = None
-            self._rebuild(run_id, normed[0])
+            idx = self._pos_map[run_id]
+            self._index.remove_ids(np.array([idx]))
+            self._index.add_with_ids(vec, np.array([idx]))
         else:
-            self._index.add(normed)
-            self._pos_map[run_id] = len(self._id_map)
+            new_idx = self._index.ntotal  # FAISS adds sequentially
+            self._index.add_with_ids(vec, np.array([new_idx]))
+            self._pos_map[run_id] = new_idx
             self._id_map.append(run_id)
-
         self._save()
+
+    def __contains__(self, run_id: str) -> bool:
+        return run_id in self._pos_map
 
     def _rebuild(self, updated_id: str, updated_vec: np.ndarray) -> None:
         live = [(pos, rid) for pos, rid in enumerate(self._id_map) if rid is not None]

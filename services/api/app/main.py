@@ -7,15 +7,28 @@ from fastapi import FastAPI, HTTPException, Path as FPath, Body, Query, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+import traceback
 from .db import get_db, RunModel
 from .ml.run_similarity import compute_run_vector, RunSimilarityIndex
+from .ml.model_server import ModelServer
 from .auth import create_access_token, verify_token
+from .tasks import extract_features_task
+from fastapi.middleware.cors import CORSMiddleware
 from pathlib import Path
 import os
+from openbioops.processing.features import generate_features
+from .logger import get_logger
+logger = get_logger(__name__)
 
+PROJECT_ROOT = Path(__file__).resolve().parents[3]  
+MODEL_SERVER: ModelServer | None = None
 ARTIFACTS_DIR = Path(os.environ.get(
     "ARTIFACTS_DIR",
-    str(Path(__file__).parents[3] / "artifacts" / "ml")
+    str(PROJECT_ROOT / "artifacts" / "ml")
+))
+FEATURES_DIR = Path(os.environ.get(
+    "FEATURES_DIR",
+    str(PROJECT_ROOT / "artifacts" / "features")
 ))
 
 app = FastAPI(
@@ -25,9 +38,31 @@ app = FastAPI(
                 "include it as `Authorization: Bearer <token>` on all other requests.",
     version="0.2.0",
 )
-SIM_INDEX = RunSimilarityIndex()
+@app.exception_handler(Exception)
+async def universal_exception_handler(request: Request, exc: Exception):
+    logger.error(f"Unhandled exception: {exc}", exc_info=True)
+    return JSONResponse(status_code=500, content={"detail": "Internal server error"})
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
+SIM_INDEX: VectorStore = RunSimilarityIndex()
 
+# update with lifespan 
+@app.on_event("startup")
+def startup_model_server():
+    global MODEL_SERVER
+    try:
+        MODEL_SERVER = ModelServer()
+        logger.info("ModelServer initialized successfully")
+    except Exception as e:
+        logger.fatal(f"ModelServer failed to start: {e}")
+        traceback.logger.info_exc()
+        MODEL_SERVER = None
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def require_valid_uuid(run_id: str) -> None:
@@ -59,6 +94,7 @@ def run_to_dict(run: RunModel) -> dict:
 class CreateRunRequest(BaseModel):
     name: Optional[str] = None
     metadata: Optional[dict] = None
+    raw_data_path: Optional[str] = None
 
 
 class CreateRunResponse(BaseModel):
@@ -95,16 +131,35 @@ def create_run(
     db.add(run)
     db.commit()
     db.refresh(run)
+
+    # Auto-generate features if raw data provided
+    if payload.raw_data_path:
+        if MODEL_SERVER is None:
+            raise HTTPException(status_code=503, detail="Model server not loaded")
+        extract_features_task.apply_async(args=(run.id, payload.raw_data_path, str(FEATURES_DIR)))
+        run.qc_status = "processing"
+        db.commit()
+    elif payload.raw_data_path and not MODEL_SERVER:
+        raise HTTPException(status_code=503, detail="Model server not loaded, cannot generate features")
+
     return {"run_id": run.id, "name": run.name}
 
 
-@app.get("/runs", tags=["runs"])
+@app.get("/runs")
 def list_runs(
     db: Session = Depends(get_db),
+    offset: int = Query(0, ge=0),
+    limit: int = Query(50, ge=1, le=200),
     user: str = Depends(verify_token),
-) -> List[dict]:
-    return [run_to_dict(r) for r in db.query(RunModel).all()]
-
+):
+    total = db.query(RunModel).count()
+    runs = db.query(RunModel).order_by(RunModel.created_at.desc()).offset(offset).limit(limit).all()
+    return {
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "runs": [run_to_dict(r) for r in runs]
+    }
 
 @app.get("/runs/{run_id}", tags=["runs"])
 def get_run(
@@ -115,6 +170,11 @@ def get_run(
     require_valid_uuid(run_id)
     return run_to_dict(get_run_or_404(db, run_id))
 
+@app.get("/runs/{run_id}/status", tags=["runs"])
+def get_run_status(run_id: str, db: Session = Depends(get_db)):
+    run = get_run_or_404(db, run_id)
+    feature_path = FEATURES_DIR / f"{run_id}.parquet"
+    return {"run_id": run_id, "status": run.qc_status, "features_ready": feature_path.exists()}
 
 @app.post("/runs/{run_id}/compute_vector", tags=["runs"])
 def compute_vector_for_run(
@@ -139,7 +199,27 @@ def compute_vector_for_run(
         import pandas as pd
         rows = pd.read_parquet(emb_parquet).to_dict(orient="records")
     else:
-        raise HTTPException(status_code=404, detail="embeddings not found for run")
+        feature_path = Path(os.environ.get("FEATURES_DIR", "artifacts/features")) / f"{run_id}.parquet"
+        if not feature_path.exists():
+            raise HTTPException(
+                status_code=404,
+                detail="No embedding file or feature parquet found for this run. "
+                       "Upload a features file to {feature_path}.parquet first."
+            )
+
+        if MODEL_SERVER is None:
+            raise HTTPException(
+                status_code=503,
+                detail="Model server not available (checkpoint missing or startup failed)."
+            )
+        # Run inference and save the per‑cell embeddings for next time
+        emb_df = MODEL_SERVER.embed(feature_path)
+        rows = emb_df.to_dict(orient="records")
+
+        # Cache as JSON for faster subsequent requests, save as parquet
+        emb_json.parent.mkdir(parents=True, exist_ok=True)
+        emb_json.write_text(json.dumps(rows))
+        emb_df.to_parquet(ARTIFACTS_DIR / f"{run_id}.parquet")
 
     vec = compute_run_vector(rows)
     SIM_INDEX.upsert(run_id, vec)

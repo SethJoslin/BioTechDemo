@@ -8,8 +8,9 @@ import argparse
 import numpy as np
 import pandas as pd
 import torch
-
-from model import ContrastiveEncoder
+import sys
+sys.path.insert(0, '../lib')
+from openbioops.models.contrastive import ContrastiveEncoder, nt_xent_loss
 
 
 def load_model(

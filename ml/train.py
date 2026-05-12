@@ -1,12 +1,11 @@
 import argparse
-
 import mlflow
 import pandas as pd
 import torch
 from torch.utils.data import DataLoader, Dataset
-
-from model import ContrastiveEncoder, nt_xent_loss  # noqa: F401
-
+import sys
+sys.path.insert(0, '../lib')
+from openbioops.models.contrastive import ContrastiveEncoder, nt_xent_loss
 
 class TabularDataset(Dataset):
     def __init__(self, df: pd.DataFrame):

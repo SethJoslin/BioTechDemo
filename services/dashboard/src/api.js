@@ -1,24 +1,46 @@
 const BASE = process.env.REACT_APP_API_URL || "http://localhost:8000";
 
-function handleResponse(r) {
-  if (!r.ok) throw new Error(`API error ${r.status}: ${r.url}`);
-  return r.json();
+function authHeaders(token) {
+  return {
+    "Content-Type": "application/json",
+    "Authorization": `Bearer ${token}`,
+  };
 }
 
-export async function fetchRuns() {
-  return fetch(`${BASE}/runs`).then(handleResponse);
+async function handle(res) {
+  if (!res.ok) throw new Error(`${res.status} ${res.url}`);
+  return res.json();
 }
 
-export async function fetchRun(runId) {
-  return fetch(`${BASE}/runs/${runId}`).then(handleResponse);
+export async function getToken(username) {
+  return fetch(`${BASE}/token`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username }),
+  }).then(handle);
 }
 
-export async function computeVector(runId) {
+export async function fetchRuns(token) {
+  return fetch(`${BASE}/runs`, { headers: authHeaders(token) }).then(handle);
+}
+
+export async function fetchRun(token, runId) {
+  return fetch(`${BASE}/runs/${runId}`, { headers: authHeaders(token) }).then(handle);
+}
+
+export async function fetchQC(token, runId) {
+  return fetch(`${BASE}/runs/${runId}/qc`, { headers: authHeaders(token) }).then(handle);
+}
+
+export async function fetchSimilarity(token, runId, k = 5) {
+  return fetch(`${BASE}/similarity/${runId}?k=${k}`, {
+    headers: authHeaders(token),
+  }).then(handle);
+}
+
+export async function computeVector(token, runId) {
   return fetch(`${BASE}/runs/${runId}/compute_vector`, {
     method: "POST",
-  }).then(handleResponse);
-}
-
-export async function fetchSimilarity(runId, k = 5) {
-  return fetch(`${BASE}/similarity/${runId}?k=${k}`).then(handleResponse);
+    headers: authHeaders(token),
+  }).then(handle);
 }

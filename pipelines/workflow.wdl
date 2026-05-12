@@ -50,11 +50,14 @@ df.to_parquet('counts.parquet')
 }
 
 task ExtractFeatures {
-  input { File counts_file  Int n_top_genes }
+  input { File counts_file, Int n_top_genes }
   command <<<
-    python3 /scripts/extract_features.py \
-      --counts ~{counts_file} \
-      --out features.parquet
+    python3 -c "
+import sys
+sys.path.insert(0, '/opt/openbioops-lib')   # if installed there
+from openbioops.processing.features import generate_features
+generate_features('~{counts_file}', 'features.parquet')
+    "
   >>>
   output { File features = "features.parquet" }
   runtime { docker: "openbioops/feature-extract:latest" memory: "8 GB" cpu: 4 }
