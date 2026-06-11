@@ -1,0 +1,239 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+env:
+  PYTHON_VERSION: "3.11"
+  NODE_VERSION: "20"
+
+jobs:
+  # ── Linting & Type Checking ────────────────────────────────────────────────
+  lint:
+    name: Lint & Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Run ruff linter
+        run: uv run ruff check .
+
+      - name: Run ruff formatter check
+        run: uv run ruff format --check .
+
+      - name: Run mypy
+        run: uv run mypy services/api/app --ignore-missing-imports
+        continue-on-error: true
+
+  # ── API Tests ──────────────────────────────────────────────────────────────
+  test-api:
+    name: API Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Run tests with coverage
+        env:
+          JWT_SECRET: test-secret-for-ci
+          ARTIFACTS_DIR: /tmp/artifacts
+          FEATURES_DIR: /tmp/features
+        run: |
+          mkdir -p /tmp/artifacts /tmp/features
+          cd services/api
+          uv run pytest tests/ -v --cov=app --cov-report=xml --cov-report=term-missing
+
+      - name: Upload coverage
+        uses: codecov/codecov-action@v4
+        with:
+          file: services/api/coverage.xml
+          flags: api
+          fail_ci_if_error: false
+        continue-on-error: true
+
+  # ── ML & Library Tests ─────────────────────────────────────────────────────
+  test-ml:
+    name: ML & Library Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: uv sync --all-extras
+
+      - name: Run library tests
+        run: uv run pytest tests/test_processing.py -v
+
+      - name: Run ML tests
+        env:
+          ARTIFACTS_DIR: /tmp/artifacts
+          FEATURES_DIR: /tmp/features
+        run: |
+          mkdir -p /tmp/artifacts /tmp/features
+          uv run pytest tests/test_ml.py -v
+
+  # ── Dashboard Build ────────────────────────────────────────────────────────
+  test-dashboard:
+    name: Dashboard Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          cd services/dashboard
+          npm ci || npm install
+
+      - name: Build dashboard
+        run: |
+          cd services/dashboard
+          npm run build
+        env:
+          CI: true
+
+  # ── Docker Build ───────────────────────────────────────────────────────────
+  build-docker:
+    name: Build Docker Images
+    runs-on: ubuntu-latest
+    needs: [lint, test-api, test-ml]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build API image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: services/api/Dockerfile
+          push: false
+          tags: openbioops/api:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build Dashboard image
+        uses: docker/build-push-action@v5
+        with:
+          context: services/dashboard
+          file: services/dashboard/Dockerfile
+          push: false
+          tags: openbioops/dashboard:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build feature-extract image
+        uses: docker/build-push-action@v5
+        with:
+          context: pipelines/containers/feature-extract
+          push: false
+          tags: openbioops/feature-extract:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ── Pipeline Smoke Test ────────────────────────────────────────────────────
+  test-pipeline:
+    name: Pipeline Smoke Test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          pip install pandas pyarrow numpy
+          pip install -e lib/
+
+      - name: Install Nextflow
+        run: |
+          curl -s https://get.nextflow.io | bash
+          sudo mv nextflow /usr/local/bin/
+
+      - name: Create test input
+        run: |
+          mkdir -p data
+          python -c "
+          import pandas as pd
+          import numpy as np
+          np.random.seed(42)
+          df = pd.DataFrame(
+              np.random.poisson(5, (50, 200)),
+              columns=[f'gene_{i}' for i in range(200)],
+              index=[f'cell_{i}' for i in range(50)]
+          )
+          df.to_parquet('data/test_input.parquet')
+          "
+
+      - name: Run pipeline
+        run: |
+          cd pipelines
+          nextflow run main.nf --input '../data/test_input.parquet' -profile test || true
+
+  # ── Security Scan ──────────────────────────────────────────────────────────
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '0'
+
+      - name: Check for secrets
+        uses: trufflesecurity/trufflehog@main
+        with:
+          path: ./
+          extra_args: --only-verified
+        continue-on-error: true

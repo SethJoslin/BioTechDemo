@@ -1,0 +1,174 @@
+services:
+  # ── API Service ──────────────────────────────────────────────────────────────
+  api:
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
+      target: development
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./services/api/app:/app/app:ro
+      - ./services/api/tests:/app/tests
+      - ./artifacts:/app/artifacts
+      - ./data:/app/data
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PROJECT_ROOT=/app
+      - JWT_SECRET=${JWT_SECRET:-dev-secret-change-in-prod}
+      - ARTIFACTS_DIR=/app/artifacts/ml
+      - FEATURES_DIR=/app/artifacts/features
+      - DATABASE_URL=sqlite:///./data/runs.db
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - MLFLOW_TRACKING_URI=http://mlflow:5000
+      - PREFECT_API_URL=http://prefect-server:4200/api
+      - NUMBA_CACHE_DIR=/app/.numba_cache
+    depends_on:
+      redis:
+        condition: service_healthy
+      mlflow:
+        condition: service_healthy
+      prefect-server:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ── Dashboard Service ────────────────────────────────────────────────────────
+  dashboard:
+    build:
+      context: ./services/dashboard
+      dockerfile: Dockerfile
+    ports:
+      - "3000:80"
+    environment:
+      - REACT_APP_API_URL=http://localhost:8000
+    depends_on:
+      api:
+        condition: service_healthy
+
+  # ── Redis (Message Broker) ───────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    command: redis-server --appendonly yes
+
+  # ── Celery Worker ────────────────────────────────────────────────────────────
+  celery-worker:
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
+      target: production
+    command: celery -A app.tasks worker --loglevel=info
+    environment:
+      - PROJECT_ROOT=/app
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - ARTIFACTS_DIR=/app/artifacts/ml
+      - FEATURES_DIR=/app/artifacts/features
+      - DATABASE_URL=sqlite:///./data/runs.db
+      - NUMBA_CACHE_DIR=/app/.numba_cache
+    volumes:
+      - ./artifacts:/app/artifacts
+      - ./data:/app/data
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  # ── MLflow Tracking Server ───────────────────────────────────────────────────
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.9.2
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./artifacts/mlflow:/mlflow
+    environment:
+      - MLFLOW_BACKEND_STORE_URI=sqlite:///mlflow/mlflow.db
+      - MLFLOW_DEFAULT_ARTIFACT_ROOT=/mlflow/artifacts
+    command: >
+      mlflow server
+      --backend-store-uri sqlite:///mlflow/mlflow.db
+      --default-artifact-root /mlflow/artifacts
+      --host 0.0.0.0
+      --port 5000
+    healthcheck:
+      # MLflow container uses Python base image (curl/nc not available)
+      test: ["CMD", "python", "-c", "import socket; s=socket.socket(); s.connect(('localhost', 5000)); s.close()"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ── Prefect Server (Workflow Orchestration) ──────────────────────────────────
+  prefect-server:
+    image: prefecthq/prefect:2-python3.11
+    ports:
+      - "4200:4200"
+    environment:
+      - PREFECT_SERVER_API_HOST=0.0.0.0
+      - PREFECT_API_DATABASE_CONNECTION_URL=sqlite+aiosqlite:////data/prefect.db
+      - PREFECT_API_URL=http://prefect-server:4200/api
+    volumes:
+      - ./data:/data
+    command: prefect server start --host 0.0.0.0
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:4200/api/health').read()"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # ── Prefect Worker (Executes Flows) ──────────────────────────────────────────
+  prefect-worker:
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
+      target: production
+    command: prefect worker start --pool default-pool --type process
+    environment:
+      - PROJECT_ROOT=/app
+      - DATABASE_URL=sqlite:///./data/runs.db
+      - PREFECT_API_URL=http://prefect-server:4200/api
+      - ARTIFACTS_DIR=/app/artifacts/ml
+      - FEATURES_DIR=/app/artifacts/features
+      - NUMBA_CACHE_DIR=/app/.numba_cache
+    volumes:
+      - ./artifacts:/app/artifacts
+      - ./data:/app/data
+    depends_on:
+      prefect-server:
+        condition: service_healthy
+
+  # ── Database Migrations (run once) ───────────────────────────────────────────
+  migrations:
+    build:
+      context: .
+      dockerfile: services/api/Dockerfile
+      target: production
+    command: alembic upgrade head
+    environment:
+      - DATABASE_URL=sqlite:///./data/runs.db
+    volumes:
+      - ./data:/app/data
+    profiles:
+      - setup
+
+volumes:
+  redis_data:
+
+# Usage:
+# - Development: docker compose up
+# - Run migrations: docker compose run --rm migrations
+# - Production build: docker compose build --target production

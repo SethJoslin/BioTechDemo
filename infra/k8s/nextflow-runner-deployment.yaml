@@ -1,0 +1,21 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nextflow-runner
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: nextflow-runner
+  template:
+    metadata:
+      labels:
+        app: nextflow-runner
+    spec:
+      serviceAccountName: nextflow-runner
+      containers:
+        - name: nextflow
+          image: yourrepo/nextflow-base:latest
+          env:
+            - name: AWS_REGION
+              value: "us-west-2"

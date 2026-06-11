@@ -1,0 +1,44 @@
+# OpenBioOps Terraform Configuration
+# Copy this file to terraform.tfvars and customize for your environment
+
+# ── Environment ───────────────────────────────────────────────────────────────
+
+environment  = "dev"
+project_name = "openbioops"
+aws_region   = "us-west-2"
+
+# ── Networking ────────────────────────────────────────────────────────────────
+
+vpc_cidr           = "10.0.0.0/16"
+availability_zones = ["us-west-2a", "us-west-2b", "us-west-2c"]
+
+# ── EKS Cluster ───────────────────────────────────────────────────────────────
+
+eks_cluster_version   = "1.28"
+eks_node_desired_size = 2
+eks_node_max_size     = 10
+eks_node_min_size     = 1
+
+# ── RDS Database ──────────────────────────────────────────────────────────────
+
+rds_instance_class    = "db.t3.medium"
+rds_allocated_storage = 100
+rds_username          = "openbioops"
+# rds_password: Set via environment variable TF_VAR_rds_password
+
+# ── Redis ─────────────────────────────────────────────────────────────────────
+
+redis_node_type = "cache.t3.medium"
+
+# ── Application ───────────────────────────────────────────────────────────────
+
+dashboard_domain = "dashboard.openbioops.com"
+
+# ── Production Overrides ──────────────────────────────────────────────────────
+# For production environment, increase resources:
+#
+# eks_node_desired_size = 3
+# eks_node_max_size     = 20
+# rds_instance_class    = "db.r6g.xlarge"
+# rds_allocated_storage = 500
+# redis_node_type       = "cache.r6g.large"

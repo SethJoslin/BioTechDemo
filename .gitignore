@@ -1,0 +1,197 @@
+# ── Environment ────────────────────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+.envrc
+
+# ── Python ─────────────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg
+*.egg-info/
+pip-wheel-metadata/
+.Python
+.venv/
+venv/
+env/
+ENV/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.dmypy.json
+dmypy.json
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+.hypothesis/
+.tox/
+*.mo
+*.pot
+
+# ── UV / Package Management ────────────────────────────────────────────────────
+# IMPORTANT: uv.lock should be committed for reproducible builds
+# Do NOT add uv.lock to .gitignore
+
+# ── Node / React ───────────────────────────────────────────────────────────────
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnp.*
+dist/
+build/
+.cache/
+.parcel-cache/
+services/dashboard/build/
+services/dashboard/.cache/
+
+# ── Jupyter Notebooks ──────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/*
+*.ipynb_checkpoints
+notebooks/.ipynb_checkpoints/
+
+# ── Nextflow / WDL Pipelines ───────────────────────────────────────────────────
+work/
+.nextflow/
+.nextflow.log*
+.nextflow.pid
+report.html
+timeline.html
+trace.txt
+dag.dot
+pipelines/results/
+cromwell-executions/
+cromwell-workflow-logs/
+
+# ── ML Artifacts & Models ──────────────────────────────────────────────────────
+artifacts/
+*.parquet
+*.pt
+*.pth
+*.ckpt
+*.pkl
+*.pickle
+*.h5
+*.h5ad
+*.hdf5
+*.joblib
+*.npz
+
+# Keep example/demo data and test fixtures
+!data/pbmc3k_raw.h5ad
+!data/pbmc3k_processed.h5ad
+!ml/model.pt
+!ml/pbmc3k_model.pt
+
+# ── MLflow ─────────────────────────────────────────────────────────────────────
+mlruns/
+mlflow.db
+artifacts/mlflow/
+
+# ── Prefect ────────────────────────────────────────────────────────────────────
+.prefect/
+prefect.db
+data/prefect.db
+
+# ── Celery / Redis ─────────────────────────────────────────────────────────────
+celerybeat-schedule
+celerybeat.pid
+dump.rdb
+
+# ── Database Files ─────────────────────────────────────────────────────────────
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
+data/*.db
+data/*.sqlite
+
+# ── Logs ───────────────────────────────────────────────────────────────────────
+*.log
+logs/
+*.log.*
+npm-debug.log
+yarn-debug.log
+yarn-error.log
+
+# ── Cache Directories ──────────────────────────────────────────────────────────
+.cache/
+.numba_cache/
+__pycache__/
+.scanpy_cache/
+*.cache
+
+# ── Docker / Containers ────────────────────────────────────────────────────────
+*.tar
+*.tar.gz
+.dockerignore.backup
+
+# ── FAISS Index Files ──────────────────────────────────────────────────────────
+data/sim_index/
+*.index
+id_map.json
+
+# ── OS / Editors ───────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.sublime-project
+*.sublime-workspace
+.project
+.pydevproject
+.settings/
+
+# ── Terraform ──────────────────────────────────────────────────────────────────
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+*.tfvars
+!*.tfvars.example
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# ── Testing ────────────────────────────────────────────────────────────────────
+.pytest_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+*.cover
+.hypothesis/
+junit.xml
+test-results/
+
+# ── Misc ───────────────────────────────────────────────────────────────────────
+.env.backup
+*.bak
+*.tmp
+*.temp
+*.orig
+*.rej
+docs/archive/

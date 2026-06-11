@@ -1,0 +1,151 @@
+# KEDA ScaledObjects for advanced auto-scaling
+# Requires KEDA operator: https://keda.sh/
+
+# Celery Worker Auto-Scaling based on Redis queue length
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: celery-worker-scaler
+  namespace: openbioops
+spec:
+  scaleTargetRef:
+    name: celery-worker
+  pollingInterval: 30  # Check queue length every 30 seconds
+  cooldownPeriod: 300  # Wait 5 minutes after last trigger before scaling down
+  minReplicaCount: 1   # Minimum number of workers
+  maxReplicaCount: 50  # Maximum number of workers
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 300
+          policies:
+          - type: Percent
+            value: 50
+            periodSeconds: 120
+        scaleUp:
+          stabilizationWindowSeconds: 0
+          policies:
+          - type: Percent
+            value: 100
+            periodSeconds: 30
+  triggers:
+  # Scale based on Redis queue length
+  - type: redis
+    metadata:
+      address: redis-service:6379
+      listName: celery  # Celery queue name
+      listLength: "10"  # Scale up if queue has more than 10 items
+      activationListLength: "5"  # Activate scaling when queue >= 5
+      databaseIndex: "0"
+
+---
+# API Auto-Scaling based on Prometheus metrics
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: api-prometheus-scaler
+  namespace: openbioops
+spec:
+  scaleTargetRef:
+    name: api
+  pollingInterval: 15
+  cooldownPeriod: 300
+  minReplicaCount: 2
+  maxReplicaCount: 30
+  triggers:
+  # Scale based on HTTP request rate
+  - type: prometheus
+    metadata:
+      serverAddress: http://prometheus-server:9090
+      metricName: http_requests_per_second
+      query: |
+        sum(rate(api_request_count{namespace="openbioops"}[1m]))
+      threshold: "1000"  # Scale up when > 1000 req/s
+
+  # Scale based on request latency (p95)
+  - type: prometheus
+    metadata:
+      serverAddress: http://prometheus-server:9090
+      metricName: http_request_latency_p95
+      query: |
+        histogram_quantile(0.95,
+          sum(rate(api_request_latency_seconds_bucket{namespace="openbioops"}[5m])) by (le)
+        ) * 1000
+      threshold: "500"  # Scale up when p95 > 500ms
+
+---
+# Batch Job Auto-Scaling based on custom metrics
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: batch-processor-scaler
+  namespace: openbioops
+spec:
+  scaleTargetRef:
+    name: batch-processor
+  pollingInterval: 60
+  cooldownPeriod: 600  # Cool down for 10 minutes after batch completion
+  minReplicaCount: 0   # Scale to zero when no batches
+  maxReplicaCount: 10
+  triggers:
+  # Scale based on pending batch jobs in database
+  - type: postgresql
+    metadata:
+      host: postgres-service
+      port: "5432"
+      userName: openbioops
+      passwordFromEnv: DB_PASSWORD
+      dbName: openbioops
+      sslmode: require
+      query: SELECT COUNT(*) FROM batch_jobs WHERE status IN ('queued', 'processing')
+      targetQueryValue: "5"  # Scale up when >= 5 pending jobs
+
+---
+# MLflow Server Auto-Scaling based on request rate
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: mlflow-scaler
+  namespace: openbioops
+spec:
+  scaleTargetRef:
+    name: mlflow
+  pollingInterval: 30
+  cooldownPeriod: 600
+  minReplicaCount: 1
+  maxReplicaCount: 5
+  triggers:
+  # Scale based on HTTP requests to MLflow
+  - type: prometheus
+    metadata:
+      serverAddress: http://prometheus-server:9090
+      metricName: mlflow_requests_per_second
+      query: |
+        sum(rate(http_requests_total{service="mlflow"}[2m]))
+      threshold: "50"  # Scale up when > 50 req/s
+
+---
+# KEDA TriggerAuthentication for accessing secured resources
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: redis-trigger-auth
+  namespace: openbioops
+spec:
+  secretTargetRef:
+  - parameter: password
+    name: redis-password
+    key: password
+
+---
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: postgres-trigger-auth
+  namespace: openbioops
+spec:
+  secretTargetRef:
+  - parameter: password
+    name: postgres-credentials
+    key: password
