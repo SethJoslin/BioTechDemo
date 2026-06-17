@@ -10,7 +10,7 @@ from fastapi import APIRouter, HTTPException, Path, Body, Query, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from ...config import settings
+from ...config import settings, PaginationDefaults
 from ...db import get_db, RunModel
 from ...auth import verify_token
 from ...tasks import extract_features_task
@@ -145,7 +145,12 @@ def create_run(
 def list_runs(
     db: Session = Depends(get_db),
     offset: int = Query(0, ge=0, description="Number of runs to skip"),
-    limit: int = Query(50, ge=1, le=200, description="Maximum runs to return"),
+    limit: int = Query(
+        PaginationDefaults.DEFAULT_PAGE_SIZE,
+        ge=1,
+        le=PaginationDefaults.MAX_PAGE_SIZE,
+        description="Maximum runs to return"
+    ),
     user: str = Depends(verify_token),
 ):
     """List all runs with pagination.

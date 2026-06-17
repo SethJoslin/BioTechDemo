@@ -17,14 +17,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN python -m venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 
-# Install Python dependencies
-COPY services/api/requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r requirements.txt
+# Install pip and setuptools
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
-# Install openbioops library
+# Install openbioops library (workspace dependency)
 COPY lib /tmp/lib
 RUN pip install --no-cache-dir /tmp/lib
+
+# Install API dependencies from pyproject.toml
+COPY services/api/pyproject.toml /tmp/api/pyproject.toml
+COPY services/api/app /tmp/api/app
+WORKDIR /tmp/api
+RUN pip install --no-cache-dir .
 
 
 # ── Production Stage ─────────────────────────────────────────────────────────
@@ -94,12 +98,18 @@ RUN pip install --no-cache-dir \
     ruff \
     mypy
 
-# Copy tests directory for development/testing
+# Copy ML scripts and test fixtures
 COPY --chown=appuser:appgroup ml/ ./ml/
+
+# Copy tests directory for development/testing
 COPY --chown=appuser:appgroup services/api/tests/ ./tests/
 COPY --chown=appuser:appgroup services/api/pytest.ini ./
 
-RUN python ml/generate_test_model.py && chown appuser:appgroup /app/ml/model.pt && ls -lah /app/ml/model.pt && echo "Test fixture generated succesfully"
+# Generate test model fixture at build time
+# This creates an immutable artifact baked into the image
+RUN python ml/generate_test_model.py && \
+    chown appuser:appgroup /app/ml/model.pt && \
+    echo "✓ Test fixture generated and baked into image"
 
 USER appuser
 

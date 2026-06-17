@@ -4,8 +4,7 @@ from pathlib import Path
 from typing import Generator
 import tempfile
 
-# Set testing mode before importing app
-os.environ["TESTING"] = "1"
+os.environ["TESTING"] = "true"
 
 import pytest
 import numpy as np

@@ -150,7 +150,7 @@ def load_cluster_data(run_id: str) -> dict:
 def get_umap_coordinates(
     run_id: str = Path(..., description="Run UUID"),
     db: Session = Depends(get_db),
-    user: str = Depends(verify_token),
+    # user: str = Depends(verify_token), # Public for demo eccessibility
 ):
     """Get UMAP coordinates for visualization.
 
@@ -211,7 +211,7 @@ def get_umap_coordinates(
 async def stream_umap_coordinates(
     run_id: str = Path(..., description="Run UUID"),
     db: Session = Depends(get_db),
-    user: str = Depends(verify_token),
+    # user: str = Depends(verify_token), # Public for demo eccessibility
 ):
     """Stream UMAP coordinates as newline-delimited JSON.
 
@@ -252,7 +252,7 @@ def get_gene_expression(
     run_id: str = Path(..., description="Run UUID"),
     gene: str = Path(..., description="Gene symbol"),
     db: Session = Depends(get_db),
-    user: str = Depends(verify_token),
+    # user: str = Depends(verify_token), # Public for demo eccessibility
 ):
     """Get expression values for a specific gene.
 
@@ -295,7 +295,7 @@ def list_genes(
     search: Optional[str] = Query(None, description="Search term"),
     limit: int = Query(100, ge=1, le=1000, description="Maximum results"),
     db: Session = Depends(get_db),
-    user: str = Depends(verify_token),
+    # user: str = Depends(verify_token), # Public for demo eccessibility
 ):
     """List available genes in the expression matrix."""
     validate_uuid(run_id)
@@ -326,7 +326,7 @@ def list_genes(
 def get_cluster_summary(
     run_id: str = Path(..., description="Run UUID"),
     db: Session = Depends(get_db),
-    user: str = Depends(verify_token),
+    # user: str = Depends(verify_token), # Public for demo eccessibility
 ):
     """Get summary statistics for each cluster."""
     validate_uuid(run_id)
@@ -376,7 +376,7 @@ def compute_differential_expression(
     group2: str = Query(..., description="Second group (cluster ID or cell type)"),
     top_n: int = Query(50, ge=1, le=500, description="Number of top genes to return"),
     db: Session = Depends(get_db),
-    user: str = Depends(verify_token),
+    # user: str = Depends(verify_token),  # Public for demo eccessibility
 ):
     """Compute differential expression between two groups.
 

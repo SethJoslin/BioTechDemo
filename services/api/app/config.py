@@ -3,6 +3,8 @@ Centralized configuration for OpenBioOps API.
 
 All settings are loaded from environment variables with sensible defaults.
 Use a .env file for local development.
+
+This module also contains all magic numbers and constants
 """
 import os
 from functools import lru_cache
@@ -11,6 +13,49 @@ from typing import List
 
 from pydantic import field_validator, ConfigDict
 from pydantic_settings import BaseSettings
+
+
+# ── Configuration Constants ────────────────────────────────────────────────────
+# Magic numbers are centralized here
+
+
+class RateLimitConfig:
+    """Rate limiting configuration."""
+    PRODUCTION_LIMIT = 100 # requests/min to prevent abuse
+    TESTING_LIMIT = 10000  # requests/min to avoid throttling tests
+    BURST_CAPACITY = 10 
+
+
+class PaginationDefaults:
+    """Default pagination limits for list endpoints."""
+    DEFAULT_PAGE_SIZE = 50 # balance between network payload size, db query performance, and UI rendering
+    MAX_PAGE_SIZE = 200 # prevent accidental memory issues from large queries
+
+
+class AnalysisDefaults:
+    """Default parameters for single-cell analysis pipeline.
+    Based on scanpy best practices and PBMC benchmarks.
+    """
+
+    # QC thresholds
+    MIN_GENES_PER_CELL = 200   # Filter low-quality cells
+    MAX_GENES_PER_CELL = 5000  # Filter doublets
+    MAX_PCT_MT = 20.0          # Filter dying cells (high mitochondrial %)
+
+    # Feature selection
+    N_HVG = 2000  # Number of highly variable genes (scanpy default)
+    N_PCS = 50    # Number of principal components (covers ~80% variance)
+
+    # UMAP parameters
+    N_NEIGHBORS_DEFAULT = 15  # Scanpy default, balances local/global structure
+    N_NEIGHBORS_MIN = 2       # Minimum for valid UMAP
+    N_NEIGHBORS_MAX = 100     # Beyond 100 = diminishing returns
+    MIN_DIST_DEFAULT = 0.1    # Scanpy default
+
+    # Clustering
+    RESOLUTION_DEFAULT = 1.0  # Leiden resolution (1.0 = balanced granularity)
+    RESOLUTION_MIN = 0.1      # Fewer clusters
+    RESOLUTION_MAX = 5.0      # Many fine-grained clusters
 
 
 class Settings(BaseSettings):
@@ -23,6 +68,8 @@ class Settings(BaseSettings):
     )
 
     # ── Paths ──────────────────────────────────────────────────────────────────
+    # Explicitly configured via PROJECT_ROOT environment variable
+    # Docker: PROJECT_ROOT=/app, Local: defaults to auto-detect
     project_root: Path = Path(
         os.getenv(
             "PROJECT_ROOT",
@@ -33,6 +80,9 @@ class Settings(BaseSettings):
     features_dir: Path = Path("artifacts/features")
     model_checkpoint: Path = Path("ml/model.pt")
     database_url: str = "sqlite:///./data/runs.db"
+
+    # ── Environment ────────────────────────────────────────────────────────────
+    testing: bool = False  # Set via TESTING=true environment variable
 
     # ── Security ───────────────────────────────────────────────────────────────
     # IMPORTANT: MUST set JWT_SECRET environment variable in production
@@ -94,6 +144,11 @@ class Settings(BaseSettings):
     def get_artifact_path(self, run_id: str, extension: str = "parquet") -> Path:
         """Get the artifact file path for a run."""
         return self.absolute_artifacts_dir / f"{run_id}.{extension}"
+
+    @property
+    def rate_limit_requests_per_minute(self) -> int:
+        """Rate limit varies by environment (testing vs production)."""
+        return RateLimitConfig.TESTING_LIMIT if self.testing else RateLimitConfig.PRODUCTION_LIMIT
 
 
 @lru_cache

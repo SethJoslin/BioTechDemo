@@ -6,7 +6,9 @@ and track progress of multi-stage single-cell analysis.
 """
 from __future__ import annotations
 import json
+import asyncio
 from datetime import datetime
+from functools import partial
 from typing import Dict, Any, Optional
 
 from fastapi import APIRouter, HTTPException, Depends
@@ -15,23 +17,59 @@ from sqlalchemy.orm import Session
 
 from ...db import get_db, WorkflowRun, RunModel
 from ...auth import verify_token
-from ...config import settings
+from ...config import settings, AnalysisDefaults
 from ...workflows import run_single_cell_analysis, rerun_umap_flow, rerun_clustering_flow
+from ...logger import get_logger
 
+logger = get_logger(__name__)
 router = APIRouter()
 
 
 # Request/Response Models
 class AnalysisParameters(BaseModel):
-    """Parameters for staged analysis pipeline."""
-    min_genes: int = Field(200, description="Minimum genes per cell")
-    max_genes: int = Field(5000, description="Maximum genes per cell")
-    max_pct_mt: float = Field(20.0, description="Maximum mitochondrial percentage")
-    n_hvg: int = Field(2000, description="Number of highly variable genes")
-    n_pcs: int = Field(50, description="Number of principal components")
-    n_neighbors: int = Field(15, ge=2, le=100, description="UMAP n_neighbors")
-    min_dist: float = Field(0.1, ge=0.0, le=1.0, description="UMAP min_dist")
-    resolution: float = Field(1.0, ge=0.1, le=5.0, description="Leiden clustering resolution")
+    """Parameters for staged analysis pipeline.
+
+    Default values based on scanpy best practices.
+    See config.AnalysisDefaults for rationale.
+    """
+    min_genes: int = Field(
+        AnalysisDefaults.MIN_GENES_PER_CELL,
+        description="Minimum genes per cell (QC filter)"
+    )
+    max_genes: int = Field(
+        AnalysisDefaults.MAX_GENES_PER_CELL,
+        description="Maximum genes per cell (doublet filter)"
+    )
+    max_pct_mt: float = Field(
+        AnalysisDefaults.MAX_PCT_MT,
+        description="Maximum mitochondrial percentage"
+    )
+    n_hvg: int = Field(
+        AnalysisDefaults.N_HVG,
+        description="Number of highly variable genes"
+    )
+    n_pcs: int = Field(
+        AnalysisDefaults.N_PCS,
+        description="Number of principal components"
+    )
+    n_neighbors: int = Field(
+        AnalysisDefaults.N_NEIGHBORS_DEFAULT,
+        ge=AnalysisDefaults.N_NEIGHBORS_MIN,
+        le=AnalysisDefaults.N_NEIGHBORS_MAX,
+        description="UMAP n_neighbors parameter"
+    )
+    min_dist: float = Field(
+        AnalysisDefaults.MIN_DIST_DEFAULT,
+        ge=0.0,
+        le=1.0,
+        description="UMAP min_dist parameter"
+    )
+    resolution: float = Field(
+        AnalysisDefaults.RESOLUTION_DEFAULT,
+        ge=AnalysisDefaults.RESOLUTION_MIN,
+        le=AnalysisDefaults.RESOLUTION_MAX,
+        description="Leiden clustering resolution"
+    )
 
 
 class StartAnalysisRequest(BaseModel):
@@ -107,16 +145,43 @@ async def start_analysis(
     db.refresh(workflow_run)
 
     try:
-        flow_result = run_single_cell_analysis(
-            run_id=run_id,
-            raw_path=request.raw_path,
-            output_dir=str(settings.absolute_artifacts_dir),
-            features_dir=str(settings.absolute_features_dir),
-            params=params_dict
+        loop = asyncio.get_event_loop()
+        flow_result = await loop.run_in_executor(
+            None,
+            partial(
+                run_single_cell_analysis,
+                run_id=run_id,
+                raw_path=request.raw_path,
+                output_dir=str(settings.absolute_artifacts_dir),
+                features_dir=str(settings.absolute_features_dir),
+                params=params_dict
+            )
         )
 
-        workflow_run.status = "running"
+        # Update workflow status
+        workflow_run.status = "completed"
         db.commit()
+
+        # Extract QC metrics from h5ad and update run
+        try:
+            import scanpy as sc
+            qc_path = settings.absolute_artifacts_dir / f"{run_id}_qc.h5ad"
+            if qc_path.exists():
+                adata = sc.read_h5ad(qc_path)
+                run.qc_status = "passed"
+                run.qc_metrics_ = json.dumps({
+                    "n_cells": int(adata.n_obs),
+                    "n_genes": int(adata.n_vars),
+                    "mean_genes_per_cell": float(adata.obs['n_genes_by_counts'].mean()),
+                    "median_genes_per_cell": float(adata.obs['n_genes_by_counts'].median()),
+                    "mean_counts_per_cell": float(adata.obs['total_counts'].mean()),
+                    "median_counts_per_cell": float(adata.obs['total_counts'].median()),
+                    "mean_pct_mt": float(adata.obs['pct_counts_mt'].mean()),
+                    "n_clusters": flow_result.get("stages", {}).get("stage_4_clustering", {}).get("n_clusters", 0)
+                })
+                db.commit()
+        except Exception as e:
+            logger.error(f"Failed to extract QC metrics: {e}")
 
         return StartAnalysisResponse(
             workflow_run_id=workflow_run.id,

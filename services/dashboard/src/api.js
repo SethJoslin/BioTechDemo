@@ -38,6 +38,16 @@ export async function fetchRun(token, runId) {
   return fetch(`${BASE}/v1/runs/${runId}`, { headers: authHeaders(token) }).then(handle);
 }
 
+export async function deleteRun(token, runId) {
+  return fetch(`${BASE}/v1/runs/${runId}`, {
+    method: "DELETE",
+    headers: authHeaders(token),
+  }).then(res => {
+    if (!res.ok) throw new Error(`${res.status} ${res.url}`);
+    return res.status === 204 ? null : res.json();
+  });
+}
+
 export async function fetchQC(token, runId) {
   return fetch(`${BASE}/v1/runs/${runId}/qc`, { headers: authHeaders(token) }).then(handle);
 }

@@ -5,7 +5,8 @@ import {
   computeVector,
   startAnalysis,
   getAnalysisStatus,
-  rerunStage
+  rerunStage,
+  deleteRun
 } from "../api";
 import UMAPViewer from "./UMAPViewer";
 
@@ -211,6 +212,25 @@ export default function RunDetail({ token, run }) {
     }
   }
 
+  async function handleDelete() {
+    if (!window.confirm(`Delete run "${run.name || run.id}"?\n\nThis will permanently delete all associated data and cannot be undone.`)) {
+      return;
+    }
+
+    setProcessing(true); setError(null);
+    try {
+      await deleteRun(token, run.id);
+      setSuccessMsg("✓ Run deleted successfully");
+      // Redirect back to run list after a short delay
+      setTimeout(() => {
+        window.location.href = "/";
+      }, 1500);
+    } catch (e) {
+      setError(`Failed to delete run: ${e.message}`);
+      setProcessing(false);
+    }
+  }
+
   if (!run) {
     return <div style={styles.wrap}><div style={styles.empty}>Select a run to view details</div></div>;
   }
@@ -221,8 +241,19 @@ export default function RunDetail({ token, run }) {
 
   return (
     <div style={styles.wrap}>
-      <div style={styles.title}>{run.name}</div>
-      <div style={styles.id}>{run.id}</div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 20 }}>
+        <div>
+          <div style={styles.title}>{run.name}</div>
+          <div style={styles.id}>{run.id}</div>
+        </div>
+        <button
+          style={{ ...styles.btn, background: "#e53e3e" }}
+          onClick={handleDelete}
+          disabled={processing}
+        >
+          Delete Run
+        </button>
+      </div>
 
       {/* Analysis Pipeline */}
       <div style={styles.section}>

@@ -62,10 +62,11 @@ app.add_middleware(
 )
 # 2. Prometheus metrics - track all requests
 app.add_middleware(PrometheusMiddleware)
-# 3. Rate limiting - protect against abuse (use high limit for testing)
-import os
-rate_limit = 10000 if os.getenv("TESTING") else 100
-app.add_middleware(RateLimitMiddleware, requests_per_minute=rate_limit)
+# 3. Rate limiting - protect against abuse
+app.add_middleware(
+    RateLimitMiddleware,
+    requests_per_minute=settings.rate_limit_requests_per_minute
+)
 # 4. Correlation ID - for request tracing
 app.add_middleware(CorrelationIDMiddleware)
 # 5. Logging - log all requests
