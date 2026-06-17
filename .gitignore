@@ -194,4 +194,6 @@ test-results/
 *.temp
 *.orig
 *.rej
-docs/archive/
+docs/
+*.md
+!README.md
