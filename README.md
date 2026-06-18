@@ -77,7 +77,7 @@ A full-stack bioinformatics platform demonstrating an end-to-end single-cell RNA
 
 ## Quick Start
 
-### Option 1: Automated Setup (Recommended)
+### Automated Setup
 
 ```bash
 git clone https://github.com/SethJoslin/BioTechDemo
@@ -94,32 +94,6 @@ make generate-model        # Creates ml/model.pt from PBMC 3k data (~2 min)
 
 # Start all services
 docker compose up          # API on :8000, dashboard on :3000, MLflow on :5000
-```
-
-### Option 2: Manual Setup
-
-```bash
-# Install uv (fast, modern Python package manager)
-curl -LsSf https://astral.sh/uv/install.sh | sh
-
-# Install dependencies
-uv sync --all-extras
-source .venv/bin/activate
-
-# Generate model and start services
-make generate-model
-docker compose up
-```
-
-### Option 3: Traditional pip (if you prefer)
-
-```bash
-python3.11 -m venv .venv
-source .venv/bin/activate
-pip install -e "lib[dev]" -e "services/api[dev]"
-pip install -r ml/requirements.txt
-cd services/dashboard && npm install && cd ../..
-make generate-model
 ```
 
 ### Run Services Individually
@@ -168,10 +142,343 @@ The notebook demonstrates all major features and serves as a reference for integ
 | `notebooks/` | Example Jupyter notebooks (PBMC 3k walkthrough) |
 | `tests/` | Comprehensive test suite (79+ tests, 75% coverage) |
 | `pipelines/main.nf` | Nextflow DSL2 pipeline (QC → quant → feature extraction) |
-| `pipelines/workflow.wdl` | WDL equivalent for DNAnexus / Terra |
+| `pipelines/workflow.wdl` | WDL equivalent for demo |
 | `infra/terraform/aws` | Complete AWS infrastructure (EKS, RDS, S3, Redis) |
 | `infra/k8s` | Kubernetes manifests with HPA + KEDA auto-scaling |
 | `.github/workflows` | CI/CD pipeline with blue-green deployment |
+
+**MLflow Integration**:
+- Access MLflow UI at http://localhost:5000
+- View all training experiments with hyperparameters and metrics
+- Compare model versions and reproduce experiments
+- Manage model lifecycle (staging → production promotion)
+
+## Architecture Highlights
+
+### API & Backend
+- **API Versioning**: Clean `/v1/*` endpoints with OpenAPI documentation
+- **Dependency Injection**: Testable architecture via FastAPI's DI system
+- **Rate Limiting**: 100 req/min per client with burst capacity
+- **Structured Logging**: JSON format for production, colored text for development
+- **Request Correlation**: X-Request-ID propagation for distributed tracing
+- **Path Validation**: Security against directory traversal attacks
+- **Database Migrations**: Alembic for schema versioning
+- **Async Tasks**: Celery + Redis for non-blocking feature extraction
+
+### ML Operations
+- **MLflow Tracking**: Full experiment tracking with hyperparameters, metrics, artifacts
+- **Model Registry**: Version management with staging/production promotion and instant rollback
+- **Automated Model Generation**: One-command model creation from PBMC 3k data
+- **Hot Model Swapping**: Update production models without pod restarts (<1s zero-downtime)
+- **Performance Monitoring**: Prediction logging, latency tracking, confidence metrics (every inference tracked)
+- **Drift Detection**: Statistical tests (Kolmogorov-Smirnov) for feature distribution shifts
+- **Batch Prediction**: Async job processing for 1000+ runs with progress tracking
+- **Model Versioning**: Full lineage tracking (version, run_id, stage, deployment metadata)
+
+### DevOps & Deployment
+- **Infrastructure as Code**: Complete Terraform modules for AWS (EKS, RDS, S3, Redis)
+- **CI/CD Pipeline**: 7-stage GitHub Actions (test → security → build → staging → integration → production)
+- **Blue-Green Deployment**: Zero-downtime deployments with automatic rollback
+- **Auto-Scaling**: HPA (CPU/memory) + KEDA (queue-based, scale-to-zero)
+- **Security Scanning**: Trivy vulnerability scanning in CI/CD
+- **Multi-stage Docker**: Optimized builds with non-root user
+
+## Tech Stack
+
+| Category | Technologies |
+|----------|--------------|
+| **Backend** | Python 3.11, FastAPI, SQLAlchemy, Alembic, Celery |
+| **ML** | PyTorch, scanpy, NumPy, Pandas, scikit-learn |
+| **ML Operations** | MLflow (tracking, registry), Prometheus (metrics) |
+| **Workflows** | Prefect 2.x (orchestration), staged pipelines with checkpointing |
+| **Infrastructure** | Docker, Kubernetes, Terraform (AWS EKS, RDS, S3) |
+| **Pipelines** | Nextflow Tower, Cromwell/WDL |
+| **Frontend** | React |
+| **Monitoring** | Prometheus, MLflow, structured logging (JSON) |
+| **Testing** | pytest, pytest-cov (75% coverage, 79+ tests) |
+| **CI/CD** | GitHub Actions (7-stage pipeline, blue-green deployment) |
+| **Auto-Scaling** | Kubernetes HPA + KEDA (event-driven, scale-to-zero) |
+
+### Analysis Pipeline Orchestration
+
+Prefect-powered multi-stage pipeline with checkpointing for efficient parameter tuning.
+
+```bash
+# Start full 4-stage analysis pipeline (QC → PCA → UMAP → Clustering)
+curl -X POST http://localhost:8000/v1/runs/{run_id}/analysis/start \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "raw_path": "data/pbmc3k_raw.h5ad",
+    "params": {
+      "min_genes": 200,
+      "max_genes": 5000,
+      "max_pct_mt": 20.0,
+      "n_hvg": 2000,
+      "n_pcs": 50,
+      "n_neighbors": 15,
+      "min_dist": 0.1,
+      "resolution": 1.0
+    }
+  }'
+
+# Response: {"workflow_run_id": "wf_abc123", "status": "running", ...}
+
+# Check pipeline progress with stage-by-stage breakdown
+curl http://localhost:8000/v1/runs/{run_id}/analysis/status \
+  -H "Authorization: Bearer <token>"
+
+# Response shows progress through all 4 stages:
+# {
+#   "workflow_run_id": "wf_abc123",
+#   "status": "running",
+#   "current_stage": "2",
+#   "stages": [
+#     {"stage": 1, "name": "Load & QC", "status": "completed", "duration_sec": 12.3},
+#     {"stage": 2, "name": "PCA", "status": "running", "duration_sec": null},
+#     {"stage": 3, "name": "UMAP", "status": "pending", "duration_sec": null},
+#     {"stage": 4, "name": "Clustering", "status": "pending", "duration_sec": null}
+#   ]
+# }
+
+# Re-run specific stage with new parameters (no reprocessing!)
+curl -X POST http://localhost:8000/v1/runs/{run_id}/analysis/rerun-stage \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "stage": 3,
+    "params": {"n_neighbors": 30, "min_dist": 0.05}
+  }'
+
+# Only re-runs UMAP+Clustering, skips expensive QC/PCA stages
+```
+
+**Pipeline Stages:**
+1. **Load & QC** - Load raw data, calculate QC metrics, filter low-quality cells
+2. **PCA** - Normalize, identify HVGs, compute principal components
+3. **UMAP** - Dimensionality reduction for visualization
+4. **Clustering** - Leiden algorithm, marker gene identification
+
+**Key Benefits:**
+- **Checkpointing**: Each stage saves results for fast re-runs
+- **Parameter Tuning**: Iterate on UMAP/clustering without reprocessing (93% time savings)
+- **Progress Tracking**: Real-time visibility into pipeline execution
+- **Failure Recovery**: Restart from failed stage, not from scratch
+
+### Health Checks & Observability
+
+```bash
+curl http://localhost:8000/health        # Full status
+curl http://localhost:8000/health/live   # Liveness probe
+curl http://localhost:8000/health/ready  # Readiness probe
+curl http://localhost:8000/metrics       # Prometheus metrics
+```
+
+**Prometheus Metrics** (http://localhost:8000/metrics):
+- Request counts, latencies, and error rates (by endpoint, method, status)
+- ML model inference times and batch sizes
+- Database query performance
+- Application state (runs total, vector index size)
+- In-progress request gauge
+
+**Example metrics**:
+```
+# Request latency histogram
+api_request_latency_seconds_bucket{method="GET",endpoint="/v1/runs"} 0.025
+
+# Total requests by status
+api_requests_total{method="POST",endpoint="/v1/runs",status="201"} 1543
+
+# Embedding computation time
+embedding_compute_seconds_bucket{model_version="v1",le="5.0"} 42
+```
+
+Interactive API docs: http://localhost:8000/docs
+
+## ML Model
+
+The contrastive encoder maps variable-length PCA embeddings (50 PCs) into a fixed 64-dimensional latent space using NT-Xent loss. Augmentation uses simulated dropout to mimic the technical variability inherent in scRNA-seq data.
+
+**Evaluated on 10x PBMC 3k (8 cell types):**
+
+| Metric | Value |
+|--------|-------|
+| k-NN accuracy (k=10) | 62.1% |
+| Silhouette score | -0.003 |
+| Random baseline | 12.5% |
+
+The near-zero silhouette reflects genuine biological overlap between cell types (CD4/CD8 T cells share most of their transcriptome) rather than model failure.
+
+### Model Generation & Versioning
+
+**First-Time Setup:**
+```bash
+make generate-model        # Generates ml/model.pt from PBMC 3k data
+```
+
+This automated script:
+1. Loads raw PBMC 3k data (`data/pbmc3k_raw.h5ad`)
+2. Extracts 50 PCA features (2000 highly variable genes)
+3. Trains contrastive encoder (20 epochs, NT-Xent loss)
+4. Saves `ml/model.pt` checkpoint
+5. Registers model in MLflow as v1, Production stage
+
+**Production Model Management:**
+
+The ModelServer integrates with MLflow Model Registry for production-grade versioning:
+
+```python
+# Load from registry (tries Production stage, falls back to local checkpoint)
+model_server = ModelServer(use_registry=True, model_stage="Production")
+
+# Hot-swap model without restart (e.g., for rollback)
+model_server.reload_from_registry(version="2")
+
+# Rollback production model if issues detected
+registry.rollback_production()  # v3 → v2 in <1 second
+```
+
+**Model Lifecycle:**
+- **None** → New model registered from training
+- **Staging** → Testing and validation
+- **Production** → Serving live traffic
+- **Archived** → Previous versions kept for rollback
+
+## Database Schema
+
+OpenBioOps uses PostgreSQL (production) or SQLite (development) with Alembic migrations for schema versioning.
+
+### Tables
+
+**`runs`** - Analysis run metadata
+- `id` (UUID, PK) - Unique run identifier
+- `name` (String) - Human-readable name
+- `metadata` (JSON) - Arbitrary run metadata (tissue type, platform, etc.)
+- `qc_status` (String) - QC status: `unknown`, `processing`, `passed`, `failed`
+- `qc_metrics` (JSON) - QC metrics (n_cells, median_genes, MT%, doublets)
+- `created_at` (Timestamp) - Creation time
+
+**`prediction_logs`** - ML model performance monitoring
+- `id` (UUID, PK)
+- `run_id` (UUID, FK → runs.id) - Associated run
+- `model_version` (String) - Model version used (e.g., "2")
+- `input_features` (JSON) - Input data
+- `prediction` (JSON) - Model output (embeddings)
+- `confidence` (Float) - Prediction confidence (0-1)
+- `latency_ms` (Float) - Inference time in milliseconds
+- `endpoint` (String) - API endpoint that generated prediction
+- `timestamp` (Timestamp) - When prediction was made
+
+**`workflow_runs`** - Multi-stage pipeline execution tracking
+- `id` (UUID, PK)
+- `run_id` (UUID, FK → runs.id) - Associated analysis run
+- `flow_run_id` (String) - Prefect flow run ID
+- `status` (String) - Workflow status: `pending`, `running`, `completed`, `failed`, `cancelled`
+- `current_stage` (String) - Currently executing stage (1-4)
+- `stage_1_status`, `stage_2_status`, `stage_3_status`, `stage_4_status` - Per-stage status
+- `parameters` (JSON) - Pipeline parameters (min_genes, n_neighbors, etc.)
+- `stage_results` (JSON) - Results and timing from each stage
+- `error_message` (Text) - Error details if workflow failed
+- `failed_stage` (String) - Stage that caused failure (1-4)
+- `created_at`, `started_at`, `completed_at` (Timestamps) - Workflow lifecycle
+
+### Migrations
+
+Schema changes are managed by Alembic. Run `make migrate` or `alembic upgrade head` to apply.
+
+**Migration history:**
+1. `20240101_0000_001_initial_runs_table.py` - Initial runs table
+2. `20240102_0000_002_add_prediction_logs.py` - Add prediction logging for model monitoring
+3. `20260603_0000_003_add_workflow_runs.py` - Add Prefect workflow orchestration support
+
+**Create new migration:**
+```bash
+make migrate-new  # Interactive prompt for migration message
+# Or manually:
+alembic revision --autogenerate -m "Add new table"
+```
+
+## Development
+
+```bash
+# Install dependencies
+make install-dev
+
+# Run linting
+make lint
+
+# Run tests
+make test
+
+# Run with coverage
+make test-cov
+
+# Start API server (hot reload)
+make api
+
+# Run database migrations
+make migrate
+```
+
+## Configuration
+
+Environment variables (see `.env.example`):
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `JWT_SECRET` | Secret for signing tokens | (required in prod) |
+| `DATABASE_URL` | SQLAlchemy connection string | `sqlite:///./data/runs.db` |
+| `DB_POOL_SIZE` | Connection pool size (Postgres) | `20` |
+| `DB_MAX_OVERFLOW` | Max overflow connections | `10` |
+| `MLFLOW_TRACKING_URI` | MLflow server URL | `http://localhost:5000` |
+| `LOG_FORMAT` | `json` or `text` | `text` |
+| `LOG_LEVEL` | Python log level | `INFO` |
+| `CORS_ORIGINS` | Allowed CORS origins (comma-separated) | `http://localhost:3000` |
+| `CELERY_BROKER_URL` | Redis URL for Celery broker | `redis://localhost:6379/0` |
+| `CELERY_RESULT_BACKEND` | Redis URL for Celery results | `redis://localhost:6379/0` |
+
+## Scaling Considerations
+
+**Horizontal scaling**:
+- API: Stateless FastAPI, scale to N replicas behind ALB/GCP Load Balancer
+- Workers: Celery auto-scales based on queue depth (0-50 workers)
+- Database: Read replicas for analytics queries
+
+**Vertical scaling** (memory-bound for feature extraction):
+- 10k cells → ~2 GB RAM
+- 100k cells → ~16 GB RAM
+- 1M cells → ~128 GB RAM (use Dask-distributed scanpy)
+
+### Production Deployment
+
+**Single-tenant** (small org, <100 users):
+- AWS ECS Fargate or GKE Autopilot
+- RDS Postgres (db.t3.medium, 2 vCPU, 4 GB)
+- ElastiCache Redis (cache.t3.micro)
+- S3/GCS for artifacts
+
+**Multi-tenant** (platform/SaaS):
+- EKS or GKE with autoscaling (3-20 nodes)
+- Aurora Serverless v2 (1-16 ACU)
+- ElastiCache Redis cluster mode
+- Multi-region S3 with replication
+
+**Infrastructure as Code**:
+```bash
+cd infra/terraform/aws
+terraform init
+terraform apply  # Deploy complete AWS infrastructure
+```
+
+See `infra/terraform/aws/README.md` for full deployment guide.
+
+**Auto-Scaling Configuration**:
+```bash
+kubectl apply -f infra/k8s/hpa.yaml          # HPA (CPU/memory)
+kubectl apply -f infra/k8s/keda-scaledobjects.yaml  # KEDA (queue-based)
+```
+
+See `infra/k8s/README.md` for auto-scaling guide.
 
 ## API Reference
 
@@ -331,395 +638,3 @@ curl -X POST http://localhost:8000/v1/batch \
 curl http://localhost:8000/v1/batch/{batch_id} \
   -H "Authorization: Bearer <token>"
 ```
-
-**MLflow Integration**:
-- Access MLflow UI at http://localhost:5000
-- View all training experiments with hyperparameters and metrics
-- Compare model versions and reproduce experiments
-- Manage model lifecycle (staging → production promotion)
-
-### Analysis Pipeline Orchestration
-
-Prefect-powered multi-stage pipeline with checkpointing for efficient parameter tuning.
-
-```bash
-# Start full 4-stage analysis pipeline (QC → PCA → UMAP → Clustering)
-curl -X POST http://localhost:8000/v1/runs/{run_id}/analysis/start \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "raw_path": "data/pbmc3k_raw.h5ad",
-    "params": {
-      "min_genes": 200,
-      "max_genes": 5000,
-      "max_pct_mt": 20.0,
-      "n_hvg": 2000,
-      "n_pcs": 50,
-      "n_neighbors": 15,
-      "min_dist": 0.1,
-      "resolution": 1.0
-    }
-  }'
-
-# Response: {"workflow_run_id": "wf_abc123", "status": "running", ...}
-
-# Check pipeline progress with stage-by-stage breakdown
-curl http://localhost:8000/v1/runs/{run_id}/analysis/status \
-  -H "Authorization: Bearer <token>"
-
-# Response shows progress through all 4 stages:
-# {
-#   "workflow_run_id": "wf_abc123",
-#   "status": "running",
-#   "current_stage": "2",
-#   "stages": [
-#     {"stage": 1, "name": "Load & QC", "status": "completed", "duration_sec": 12.3},
-#     {"stage": 2, "name": "PCA", "status": "running", "duration_sec": null},
-#     {"stage": 3, "name": "UMAP", "status": "pending", "duration_sec": null},
-#     {"stage": 4, "name": "Clustering", "status": "pending", "duration_sec": null}
-#   ]
-# }
-
-# Re-run specific stage with new parameters (no reprocessing!)
-curl -X POST http://localhost:8000/v1/runs/{run_id}/analysis/rerun-stage \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "stage": 3,
-    "params": {"n_neighbors": 30, "min_dist": 0.05}
-  }'
-
-# Only re-runs UMAP+Clustering, skips expensive QC/PCA stages
-```
-
-**Pipeline Stages:**
-1. **Load & QC** - Load raw data, calculate QC metrics, filter low-quality cells
-2. **PCA** - Normalize, identify HVGs, compute principal components
-3. **UMAP** - Dimensionality reduction for visualization
-4. **Clustering** - Leiden algorithm, marker gene identification
-
-**Key Benefits:**
-- **Checkpointing**: Each stage saves results for fast re-runs
-- **Parameter Tuning**: Iterate on UMAP/clustering without reprocessing (93% time savings)
-- **Progress Tracking**: Real-time visibility into pipeline execution
-- **Failure Recovery**: Restart from failed stage, not from scratch
-
-### Health Checks & Observability
-
-```bash
-curl http://localhost:8000/health        # Full status
-curl http://localhost:8000/health/live   # Liveness probe
-curl http://localhost:8000/health/ready  # Readiness probe
-curl http://localhost:8000/metrics       # Prometheus metrics
-```
-
-**Prometheus Metrics** (http://localhost:8000/metrics):
-- Request counts, latencies, and error rates (by endpoint, method, status)
-- ML model inference times and batch sizes
-- Database query performance
-- Application state (runs total, vector index size)
-- In-progress request gauge
-
-**Example metrics**:
-```
-# Request latency histogram
-api_request_latency_seconds_bucket{method="GET",endpoint="/v1/runs"} 0.025
-
-# Total requests by status
-api_requests_total{method="POST",endpoint="/v1/runs",status="201"} 1543
-
-# Embedding computation time
-embedding_compute_seconds_bucket{model_version="v1",le="5.0"} 42
-```
-
-Interactive API docs: http://localhost:8000/docs
-
-## ML Model
-
-The contrastive encoder maps variable-length PCA embeddings (50 PCs) into a fixed 64-dimensional latent space using NT-Xent loss. Augmentation uses simulated dropout to mimic the technical variability inherent in scRNA-seq data.
-
-**Evaluated on 10x PBMC 3k (8 cell types):**
-
-| Metric | Value |
-|--------|-------|
-| k-NN accuracy (k=10) | 62.1% |
-| Silhouette score | -0.003 |
-| Random baseline | 12.5% |
-
-The near-zero silhouette reflects genuine biological overlap between cell types (CD4/CD8 T cells share most of their transcriptome) rather than model failure.
-
-### Model Generation & Versioning
-
-**First-Time Setup:**
-```bash
-make generate-model        # Generates ml/model.pt from PBMC 3k data
-```
-
-This automated script:
-1. Loads raw PBMC 3k data (`data/pbmc3k_raw.h5ad`)
-2. Extracts 50 PCA features (2000 highly variable genes)
-3. Trains contrastive encoder (20 epochs, NT-Xent loss)
-4. Saves `ml/model.pt` checkpoint
-5. Registers model in MLflow as v1, Production stage
-
-**Production Model Management:**
-
-The ModelServer integrates with MLflow Model Registry for production-grade versioning:
-
-```python
-# Load from registry (tries Production stage, falls back to local checkpoint)
-model_server = ModelServer(use_registry=True, model_stage="Production")
-
-# Hot-swap model without restart (e.g., for rollback)
-model_server.reload_from_registry(version="2")
-
-# Rollback production model if issues detected
-registry.rollback_production()  # v3 → v2 in <1 second
-```
-
-**Model Lifecycle:**
-- **None** → New model registered from training
-- **Staging** → Testing and validation
-- **Production** → Serving live traffic
-- **Archived** → Previous versions kept for rollback
-
-See **[`docs/MODEL_MANAGEMENT.md`](docs/MODEL_MANAGEMENT.md)** for complete guide to model versioning, promotion, and rollback.
-
-## Database Schema
-
-OpenBioOps uses PostgreSQL (production) or SQLite (development) with Alembic migrations for schema versioning.
-
-### Tables
-
-**`runs`** - Analysis run metadata
-- `id` (UUID, PK) - Unique run identifier
-- `name` (String) - Human-readable name
-- `metadata` (JSON) - Arbitrary run metadata (tissue type, platform, etc.)
-- `qc_status` (String) - QC status: `unknown`, `processing`, `passed`, `failed`
-- `qc_metrics` (JSON) - QC metrics (n_cells, median_genes, MT%, doublets)
-- `created_at` (Timestamp) - Creation time
-
-**`prediction_logs`** - ML model performance monitoring
-- `id` (UUID, PK)
-- `run_id` (UUID, FK → runs.id) - Associated run
-- `model_version` (String) - Model version used (e.g., "2")
-- `input_features` (JSON) - Input data
-- `prediction` (JSON) - Model output (embeddings)
-- `confidence` (Float) - Prediction confidence (0-1)
-- `latency_ms` (Float) - Inference time in milliseconds
-- `endpoint` (String) - API endpoint that generated prediction
-- `timestamp` (Timestamp) - When prediction was made
-
-**`workflow_runs`** - Multi-stage pipeline execution tracking
-- `id` (UUID, PK)
-- `run_id` (UUID, FK → runs.id) - Associated analysis run
-- `flow_run_id` (String) - Prefect flow run ID
-- `status` (String) - Workflow status: `pending`, `running`, `completed`, `failed`, `cancelled`
-- `current_stage` (String) - Currently executing stage (1-4)
-- `stage_1_status`, `stage_2_status`, `stage_3_status`, `stage_4_status` - Per-stage status
-- `parameters` (JSON) - Pipeline parameters (min_genes, n_neighbors, etc.)
-- `stage_results` (JSON) - Results and timing from each stage
-- `error_message` (Text) - Error details if workflow failed
-- `failed_stage` (String) - Stage that caused failure (1-4)
-- `created_at`, `started_at`, `completed_at` (Timestamps) - Workflow lifecycle
-
-### Migrations
-
-Schema changes are managed by Alembic. Run `make migrate` or `alembic upgrade head` to apply.
-
-**Migration history:**
-1. `20240101_0000_001_initial_runs_table.py` - Initial runs table
-2. `20240102_0000_002_add_prediction_logs.py` - Add prediction logging for model monitoring
-3. `20260603_0000_003_add_workflow_runs.py` - Add Prefect workflow orchestration support
-
-**Create new migration:**
-```bash
-make migrate-new  # Interactive prompt for migration message
-# Or manually:
-alembic revision --autogenerate -m "Add new table"
-```
-
-## Architecture Highlights
-
-### API & Backend
-- **API Versioning**: Clean `/v1/*` endpoints with OpenAPI documentation
-- **Dependency Injection**: Testable architecture via FastAPI's DI system
-- **Rate Limiting**: 100 req/min per client with burst capacity
-- **Structured Logging**: JSON format for production, colored text for development
-- **Request Correlation**: X-Request-ID propagation for distributed tracing
-- **Path Validation**: Security against directory traversal attacks
-- **Database Migrations**: Alembic for schema versioning
-- **Async Tasks**: Celery + Redis for non-blocking feature extraction
-
-### ML Operations
-- **MLflow Tracking**: Full experiment tracking with hyperparameters, metrics, artifacts
-- **Model Registry**: Version management with staging/production promotion and instant rollback
-- **Automated Model Generation**: One-command model creation from PBMC 3k data
-- **Hot Model Swapping**: Update production models without pod restarts (<1s zero-downtime)
-- **Performance Monitoring**: Prediction logging, latency tracking, confidence metrics (every inference tracked)
-- **Drift Detection**: Statistical tests (Kolmogorov-Smirnov) for feature distribution shifts
-- **Batch Prediction**: Async job processing for 1000+ runs with progress tracking
-- **Model Versioning**: Full lineage tracking (version, run_id, stage, deployment metadata)
-
-### DevOps & Deployment
-- **Infrastructure as Code**: Complete Terraform modules for AWS (EKS, RDS, S3, Redis)
-- **CI/CD Pipeline**: 7-stage GitHub Actions (test → security → build → staging → integration → production)
-- **Blue-Green Deployment**: Zero-downtime deployments with automatic rollback
-- **Auto-Scaling**: HPA (CPU/memory) + KEDA (queue-based, scale-to-zero)
-- **Security Scanning**: Trivy vulnerability scanning in CI/CD
-- **Multi-stage Docker**: Optimized builds with non-root user
-
-## Tech Stack
-
-| Category | Technologies |
-|----------|--------------|
-| **Backend** | Python 3.11, FastAPI, SQLAlchemy, Alembic, Celery |
-| **ML** | PyTorch, scanpy, NumPy, Pandas, scikit-learn |
-| **ML Operations** | MLflow (tracking, registry), Prometheus (metrics) |
-| **Workflows** | Prefect 2.x (orchestration), staged pipelines with checkpointing |
-| **Infrastructure** | Docker, Kubernetes, Terraform (AWS EKS, RDS, S3) |
-| **Pipelines** | Nextflow Tower, Cromwell/WDL |
-| **Frontend** | React |
-| **Monitoring** | Prometheus, MLflow, structured logging (JSON) |
-| **Testing** | pytest, pytest-cov (75% coverage, 79+ tests) |
-| **CI/CD** | GitHub Actions (7-stage pipeline, blue-green deployment) |
-| **Auto-Scaling** | Kubernetes HPA + KEDA (event-driven, scale-to-zero) |
-
-## Development
-
-```bash
-# Install dependencies
-make install-dev
-
-# Run linting
-make lint
-
-# Run tests
-make test
-
-# Run with coverage
-make test-cov
-
-# Start API server (hot reload)
-make api
-
-# Run database migrations
-make migrate
-```
-
-## Configuration
-
-Environment variables (see `.env.example`):
-
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `JWT_SECRET` | Secret for signing tokens | (required in prod) |
-| `DATABASE_URL` | SQLAlchemy connection string | `sqlite:///./data/runs.db` |
-| `DB_POOL_SIZE` | Connection pool size (Postgres) | `20` |
-| `DB_MAX_OVERFLOW` | Max overflow connections | `10` |
-| `MLFLOW_TRACKING_URI` | MLflow server URL | `http://localhost:5000` |
-| `LOG_FORMAT` | `json` or `text` | `text` |
-| `LOG_LEVEL` | Python log level | `INFO` |
-| `CORS_ORIGINS` | Allowed CORS origins (comma-separated) | `http://localhost:3000` |
-| `CELERY_BROKER_URL` | Redis URL for Celery broker | `redis://localhost:6379/0` |
-| `CELERY_RESULT_BACKEND` | Redis URL for Celery results | `redis://localhost:6379/0` |
-
-## Performance & Scale
-
-### Tested Workloads
-
-| Metric | Value | Hardware |
-|--------|-------|----------|
-| **Cells processed** | 1M+ cells | 8 vCPU, 32 GB RAM |
-| **Feature extraction** | ~30s / 10k cells | scanpy with sparse matrices |
-| **Model training** | 5 min (50 epochs) | CPU-only (M1 Mac) |
-| **Inference throughput** | 50k cells/sec | CPU batch size 512 |
-| **Embedding search** | <10ms @ 10k runs | FAISS cosine similarity |
-| **Storage per run** | ~5 MB | Parquet compressed |
-| **API latency (p95)** | <200ms | Including DB query |
-
-### Scaling Considerations
-
-**Horizontal scaling**:
-- API: Stateless FastAPI, scale to N replicas behind ALB/GCP Load Balancer
-- Workers: Celery auto-scales based on queue depth (0-50 workers)
-- Database: Read replicas for analytics queries
-
-**Vertical scaling** (memory-bound for feature extraction):
-- 10k cells → ~2 GB RAM
-- 100k cells → ~16 GB RAM
-- 1M cells → ~128 GB RAM (use Dask-distributed scanpy)
-
-**Cost optimization**:
-- Spot instances for Celery workers (2-3x cost reduction)
-- S3 Glacier for raw data after 90 days
-- S3 Intelligent-Tiering for artifacts (automatic archival)
-- Parquet compression: 2-5x storage reduction
-
-### Production Deployment
-
-**Single-tenant** (small org, <100 users):
-- AWS ECS Fargate or GKE Autopilot
-- RDS Postgres (db.t3.medium, 2 vCPU, 4 GB)
-- ElastiCache Redis (cache.t3.micro)
-- S3/GCS for artifacts
-- **Estimated cost**: $300-500/month
-
-**Multi-tenant** (platform/SaaS):
-- EKS or GKE with autoscaling (3-20 nodes)
-- Aurora Serverless v2 (1-16 ACU)
-- ElastiCache Redis cluster mode
-- Multi-region S3 with replication
-- **Estimated cost**: $2,000-5,000/month + per-tenant
-
-**Infrastructure as Code**:
-```bash
-cd infra/terraform/aws
-terraform init
-terraform apply  # Deploy complete AWS infrastructure
-```
-
-See `infra/terraform/aws/README.md` for full deployment guide.
-
-**Auto-Scaling Configuration**:
-```bash
-kubectl apply -f infra/k8s/hpa.yaml          # HPA (CPU/memory)
-kubectl apply -f infra/k8s/keda-scaledobjects.yaml  # KEDA (queue-based)
-```
-
-See `infra/k8s/README.md` for auto-scaling guide.
-
-## Roadmap
-
-- [x] Async job queue (Celery + Redis)
-- [x] API versioning with OpenAPI docs
-- [x] Rate limiting middleware
-- [x] Structured logging with correlation IDs
-- [x] Database migrations (Alembic)
-- [x] Multi-stage Docker builds
-- [x] CI/CD pipeline (GitHub Actions)
-- [x] Workflow orchestration (Nextflow Tower, Cromwell)
-- [x] Interactive UMAP visualization with gene expression overlay
-- [x] Cell type classifier with transfer learning
-- [x] Anomaly detection for QC failures
-- [x] Differential expression API
-- [x] Cell Ranger integration (10x Genomics)
-- [x] Real QC metrics (mito %, doublet detection)
-- [x] Prometheus metrics export (request latency, errors, ML metrics)
-- [x] Comprehensive testing suite (75% coverage, 79+ tests)
-- [x] Example Jupyter notebook (PBMC 3k walkthrough)
-- [x] MLflow experiment tracking and model registry
-- [x] Model performance monitoring and drift detection
-- [x] Batch prediction API (1000+ runs)
-- [x] Complete Terraform infrastructure (EKS, RDS, S3)
-- [x] Advanced CI/CD with blue-green deployment
-- [x] Kubernetes auto-scaling (HPA + KEDA)
-- [ ] A/B testing framework for model evaluation
-- [ ] Feature store for ML feature management
-- [ ] OpenTelemetry tracing integration
-- [ ] Cell Ranger ARC / Visium support
-- [ ] Snowflake data warehouse integration
-
-## License
-
-MIT
