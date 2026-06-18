@@ -140,7 +140,7 @@ The notebook demonstrates all major features and serves as a reference for integ
 | `ml/` | PyTorch contrastive encoder with MLflow tracking |
 | `lib/openbioops` | Shared Python library (models, processing) |
 | `notebooks/` | Example Jupyter notebooks (PBMC 3k walkthrough) |
-| `tests/` | Comprehensive test suite (79+ tests, 75% coverage) |
+| `tests/` | Comprehensive test suite (100+ tests, 30%+ coverage) |
 | `pipelines/main.nf` | Nextflow DSL2 pipeline (QC → quant → feature extraction) |
 | `pipelines/workflow.wdl` | WDL equivalent for demo |
 | `infra/terraform/aws` | Complete AWS infrastructure (EKS, RDS, S3, Redis) |
